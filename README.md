@@ -9,3 +9,6 @@ Fixes in this build:
 Build:
 GitHub → Actions → Build Windows GUI EXE → Run workflow
 Artifact contains `dist/CommissioningBudgetTool.exe`
+
+
+Open Excel… lets you load a different .xlsx at runtime to update models/rates/assumptions without rebuilding.

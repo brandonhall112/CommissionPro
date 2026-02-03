@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QPageSize, QFont
+import base64
 
 APP_TITLE = "Commissioning Budget Tool"
 
@@ -213,6 +215,8 @@ class MachineLine(QFrame):
         row.setSpacing(10)
 
         self.cmb_model = QComboBox()
+        self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.cmb_model.addItem("— Select —")
         self.cmb_model.addItems(models)
         self.cmb_model.currentIndexChanged.connect(self._changed)
 
@@ -244,9 +248,12 @@ class MachineLine(QFrame):
         self.on_delete(self)
 
     def value(self) -> LineSelection:
+        model = self.cmb_model.currentText().strip()
+        if model == "— Select —":
+            model = ""
         return LineSelection(
-            model=self.cmb_model.currentText().strip(),
-            qty=int(self.spin_qty.value()),
+            model=model,
+            qty=int(self.spin_qty.value()) if model else 0,
             training_required=bool(self.chk_training.isChecked())
         )
 
@@ -254,6 +261,7 @@ class MachineLine(QFrame):
 class Card(QFrame):
     def __init__(self, title: str, icon_text: str):
         super().__init__()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.setObjectName("card")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
@@ -328,7 +336,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1320, 820)
+        self.resize(1920, 1200)
 
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
@@ -433,10 +441,10 @@ class MainWindow(QMainWindow):
         self.card_eng = Card("Engineers", "🧑‍💻")
         self.card_window = Card("Max Onsite", "⏱")
         self.card_total = Card("Total Cost", "💲")
-        cards.addWidget(self.card_tech)
-        cards.addWidget(self.card_eng)
-        cards.addWidget(self.card_window)
-        cards.addWidget(self.card_total)
+        cards.addWidget(self.card_tech, 1)
+        cards.addWidget(self.card_eng, 1)
+        cards.addWidget(self.card_window, 1)
+        cards.addWidget(self.card_total, 1)
         right_l.addLayout(cards)
 
         self.alert = QLabel("")
@@ -494,6 +502,10 @@ class MainWindow(QMainWindow):
         self.apply_theme()
         self.reset_views()
 
+        # Responsive scaling baseline (designed for 1920x1200)
+        self._base_font_pt = float(self.font().pointSizeF() or 10.0)
+        self._apply_scale()
+
     def make_table(self, headers: List[str]) -> QTableWidget:
         tbl = QTableWidget(0, len(headers))
         tbl.setHorizontalHeaderLabels(headers)
@@ -509,8 +521,10 @@ class MainWindow(QMainWindow):
         return tbl
 
     def apply_theme(self):
-        blue = "#0B3D66"
-        gold = "#D39A2C"
+        # Pearson-ish palette (navy + orange + neutral)
+        blue = "#0B3D66"   # navy
+        gold = "#F15A22"   # orange accent
+        neutral = "#5E6366"
         self.setStyleSheet(f"""
         QFrame#header {{ background: {blue}; color: white; border: none; }}
         QFrame#panel {{ background: white; border: 1px solid #E6E8EB; border-radius: 14px; }}
@@ -527,15 +541,15 @@ class MainWindow(QMainWindow):
             border: 1px solid #D6D9DD; background: #F8FAFC;
         }}
         QPushButton:disabled {{ color: #94A3B8; background: #F1F5F9; }}
-        QFrame#card {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; min-width: 210px; }}
+        QFrame#card { background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }
         QLabel#cardIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 16px; }}
-        QLabel#cardTitle {{ font-size: 12px; color: #475569; font-weight: 700; }}
+        QLabel#cardTitle {{ font-size: 12px; color: #5E6366; font-weight: 700; }}
         QLabel#cardValue {{ font-size: 24px; color: #0F172A; font-weight: 900; }}
-        QLabel#cardSub {{ font-size: 12px; color: #475569; }}
+        QLabel#cardSub {{ font-size: 12px; color: #5E6366; }}
         QFrame#section {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }}
         QLabel#sectionIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 14px; }}
         QLabel#sectionTitle {{ font-size: 15px; font-weight: 900; color: #0F172A; }}
-        QLabel#sectionSub {{ font-size: 12px; color: #475569; }}
+        QLabel#sectionSub {{ font-size: 12px; color: #5E6366; }}
         QTableWidget#table {{
             background: #FFFFFF;
             border: 1px solid #EEF0F2;
@@ -615,7 +629,7 @@ class MainWindow(QMainWindow):
 
     def calc(self):
         selections = [ln.value() for ln in self.lines]
-        selections = [s for s in selections if s.qty > 0]
+        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
@@ -812,8 +826,12 @@ class MainWindow(QMainWindow):
 
         logo_html = ""
         if LOGO_PATH.exists():
-            logo_src = str(LOGO_PATH).replace("\\", "/")
-            logo_html = f'<img src="file:///{logo_src}" style="height:52px;" />'
+            try:
+                b = LOGO_PATH.read_bytes()
+                b64 = base64.b64encode(b).decode("ascii")
+                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:52px;" />'
+            except Exception:
+                logo_html = 
 
         mr = []
         for r in meta["machine_rows"]:
@@ -848,7 +866,7 @@ class MainWindow(QMainWindow):
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #0B3D66; margin: 0; }}
-            .subtitle {{ margin: 4px 0 0 0; color: #475569; }}
+            .subtitle {{ margin: 4px 0 0 0; color: #5E6366; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
             .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
@@ -857,7 +875,7 @@ class MainWindow(QMainWindow):
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
             h3 {{ color: #0B3D66; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
-            .muted {{ color: #475569; }}
+            .muted {{ color: #5E6366; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #0B3D66; }}
         </style></head><body>
             <div class="topbar">
@@ -926,19 +944,48 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Cannot print", str(e))
             return
 
-        html = self.build_quote_html(tech, eng, exp_lines, meta)
-        doc = QTextDocument()
-        doc.setHtml(html)
+        try:
+            html = self.build_quote_html(tech, eng, exp_lines, meta)
+            doc = QTextDocument()
+            doc.setHtml(html)
 
-        printer = QPrinter(QPrinter.HighResolution)
-        printer.setPageSize(QPrinter.Letter)
+            printer = QPrinter(QPrinter.HighResolution)
+            # Letter page (8.5x11)
+            try:
+                printer.setPageSize(QPageSize(QPageSize.Letter))
+            except Exception:
+                pass
 
-        preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle("Print Preview - Commissioning Budget Quote")
-        preview.paintRequested.connect(lambda p: doc.print_(p))
-        preview.exec()
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle("Print Preview - Commissioning Budget Quote")
+            preview.setWindowModality(Qt.ApplicationModal)
+            preview.resize(1100, 800)
+            preview.paintRequested.connect(lambda p: doc.print_(p))
+
+            # Show the dialog reliably
+            preview.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Print error", str(e))
+            return
+
+    def _apply_scale(self):
+        # Scale UI typography modestly with window size; keep within sensible bounds.
+        w = max(self.width(), 1)
+        h = max(self.height(), 1)
+        # Use width as primary driver; clamp to avoid extremes.
+        scale = w / 1920.0
+        scale = 0.85 if scale < 0.85 else (1.25 if scale > 1.25 else scale)
+        pt = self._base_font_pt * scale
+        f = QFont(self.font())
+        f.setPointSizeF(pt)
+        self.setFont(f)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._apply_scale()
 
     def closeEvent(self, event):
+
         event.accept()
 
 
