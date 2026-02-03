@@ -1,22 +1,20 @@
-import sys, math, datetime
+import sys, math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Dict as TDict
 
 import numpy as np
 import openpyxl
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
-    QComboBox, QCheckBox, QFrame, QScrollArea, QGridLayout
+    QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
 )
+from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+from PySide6.QtGui import QTextDocument
 
 APP_TITLE = "Commissioning Budget Tool"
 
@@ -41,7 +39,7 @@ def ceil_int(x: float) -> int:
 
 
 def balanced_allocate(total_days: int, headcount: int) -> List[int]:
-    """Balance integer days to minimize the maximum assigned days."""
+    \"\"\"Balance integer days to minimize the maximum assigned days.\"\"\"
     if headcount <= 0:
         return []
     loads = [0] * headcount
@@ -84,6 +82,15 @@ class ExpenseLine:
     details: str
 
 
+@dataclass
+class Assignment:
+    model: str
+    role: str  # "Technician" or "Engineer"
+    person_num: int
+    onsite_days: int
+    cost: float
+
+
 class ExcelData:
     def __init__(self, path: Path):
         self.path = path
@@ -100,8 +107,11 @@ class ExcelData:
             raise ValueError("Missing sheet: 'Instal days by Model'")
         ws = wb["Instal days by Model"]
 
-        # Expected headers in row 1
-        headers = {str(ws.cell(1, c).value).strip(): c for c in range(1, ws.max_column + 1) if ws.cell(1, c).value is not None}
+        headers = {
+            str(ws.cell(1, c).value).strip(): c
+            for c in range(1, ws.max_column + 1)
+            if ws.cell(1, c).value is not None
+        }
 
         def find_col(pred):
             for k, c in headers.items():
@@ -111,7 +121,7 @@ class ExcelData:
 
         col_item = find_col(lambda s: s in ["item", "model", "machine", "machine type"])
         col_tech = find_col(lambda s: "technician" in s and "day" in s)
-        col_eng = find_col(lambda s: "engineer" in s and "day" in s)
+        col_eng = find_col(lambda s: ("engineer" in s and "day" in s) or ("field engineer" in s and "day" in s))
 
         if col_item is None or col_tech is None or col_eng is None:
             raise ValueError("Model sheet columns not found. Expected: Item, Technician Days Required, Field Engineer Days Required.")
@@ -140,10 +150,9 @@ class ExcelData:
             raise ValueError("Missing sheet: 'Service Rates'")
         ws = wb["Service Rates"]
 
-        # Detect header row by "Item" and "Description"
         header_row = None
-        for r in range(1, 12):
-            if ws.cell(r, 2).value == "Item" and ws.cell(r, 3).value == "Description":
+        for r in range(1, 15):
+            if str(ws.cell(r, 2).value).strip().lower() == "item" and str(ws.cell(r, 3).value).strip().lower() == "description":
                 header_row = r
                 break
         if header_row is None:
@@ -186,21 +195,22 @@ class ExcelData:
         if k in self.rates:
             rv = self.rates[k]
             return float(rv["unit_price"]), str(rv["description"])
-        # fuzzy contains
         for rk, rv in self.rates.items():
             if k in rk:
                 return float(rv["unit_price"]), str(rv["description"])
         raise KeyError(f"Rate not found for '{key}'")
 
 
-class MachineLine(QWidget):
+class MachineLine(QFrame):
     def __init__(self, models: List[str], on_change, on_delete):
         super().__init__()
         self.on_change = on_change
         self.on_delete = on_delete
 
+        self.setObjectName("machineLine")
         row = QHBoxLayout(self)
-        row.setContentsMargins(0, 0, 0, 0)
+        row.setContentsMargins(10, 10, 10, 10)
+        row.setSpacing(10)
 
         self.cmb_model = QComboBox()
         self.cmb_model.addItems(models)
@@ -214,12 +224,13 @@ class MachineLine(QWidget):
         self.chk_training = QCheckBox("Training Required")
         self.chk_training.setChecked(True)
         self.chk_training.stateChanged.connect(self._changed)
+        self.chk_training.setToolTip("Uncheck only by customer request (training is normally included).")
 
         self.btn_delete = QPushButton("🗑")
         self.btn_delete.setFixedWidth(40)
         self.btn_delete.clicked.connect(self._delete)
 
-        row.addWidget(QLabel("Model"))
+        row.addWidget(QLabel("Machine Model"))
         row.addWidget(self.cmb_model, 2)
         row.addWidget(QLabel("Qty"))
         row.addWidget(self.spin_qty)
@@ -241,11 +252,20 @@ class MachineLine(QWidget):
 
 
 class Card(QFrame):
-    def __init__(self, title: str):
+    def __init__(self, title: str, icon_text: str):
         super().__init__()
         self.setObjectName("card")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(14, 12, 14, 12)
+
+        top = QHBoxLayout()
+        ic = QLabel(icon_text)
+        ic.setObjectName("cardIcon")
+        ic.setFixedSize(QSize(34, 34))
+        ic.setAlignment(Qt.AlignCenter)
+        top.addWidget(ic)
+
+        v = QVBoxLayout()
         self.lbl_title = QLabel(title)
         self.lbl_title.setObjectName("cardTitle")
         self.lbl_value = QLabel("—")
@@ -253,8 +273,11 @@ class Card(QFrame):
         self.lbl_sub = QLabel("")
         self.lbl_sub.setObjectName("cardSub")
         self.lbl_sub.setWordWrap(True)
-        lay.addWidget(self.lbl_title)
-        lay.addWidget(self.lbl_value)
+        v.addWidget(self.lbl_title)
+        v.addWidget(self.lbl_value)
+        top.addLayout(v, 1)
+
+        lay.addLayout(top)
         lay.addWidget(self.lbl_sub)
 
     def set_value(self, value: str, sub: str = ""):
@@ -262,11 +285,50 @@ class Card(QFrame):
         self.lbl_sub.setText(sub or "")
 
 
+class Section(QFrame):
+    def __init__(self, title: str, subtitle: str = "", icon_text: str = ""):
+        super().__init__()
+        self.setObjectName("section")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        head = QHBoxLayout()
+        if icon_text:
+            ic = QLabel(icon_text)
+            ic.setObjectName("sectionIcon")
+            ic.setFixedSize(QSize(28, 28))
+            ic.setAlignment(Qt.AlignCenter)
+            head.addWidget(ic)
+
+        title_box = QVBoxLayout()
+        t = QLabel(title)
+        t.setObjectName("sectionTitle")
+        title_box.addWidget(t)
+        if subtitle:
+            s = QLabel(subtitle)
+            s.setObjectName("sectionSub")
+            s.setWordWrap(True)
+            title_box.addWidget(s)
+        head.addLayout(title_box, 1)
+        lay.addLayout(head)
+
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(10)
+        lay.addWidget(self.content)
+
+
+def money(x: float) -> str:
+    return f"${x:,.0f}"
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.resize(1320, 780)
+        self.resize(1320, 820)
 
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
@@ -276,34 +338,37 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         header = QFrame()
         header.setObjectName("header")
         h = QHBoxLayout(header)
         h.setContentsMargins(14, 10, 14, 10)
-        h.addWidget(QLabel("☰  " + APP_TITLE))
+        h.addWidget(QLabel("🧾  " + APP_TITLE))
         h.addStretch(1)
         btn_excel = QPushButton("Open Excel…")
         btn_excel.clicked.connect(self.open_excel)
         h.addWidget(btn_excel)
         root.addWidget(header)
 
-        body = QHBoxLayout()
-        body.setContentsMargins(14, 14, 14, 14)
-        root.addLayout(body, 1)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        root.addWidget(splitter, 1)
 
-        # Left panel
+        # LEFT
         left = QFrame()
         left.setObjectName("panel")
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(14, 14, 14, 14)
+        left_l.setSpacing(12)
 
-        title = QLabel("Machine Configuration")
-        title.setObjectName("sectionTitle")
-        left_l.addWidget(title)
+        t = QLabel("Machine Configuration")
+        t.setObjectName("panelTitle")
+        left_l.addWidget(t)
+
         left_l.addWidget(QLabel(
-            "Add machines to estimate commissioning requirements.\n"
-            "Each machine type requires personnel with different skills (no sharing across types)."
+            "Add machines to estimate commissioning requirements.\\n"
+            "Each machine type requires dedicated personnel (no sharing across types)."
         ))
 
         win_box = QFrame()
@@ -326,6 +391,13 @@ class MainWindow(QMainWindow):
         self.lines_layout = QVBoxLayout(container)
         self.lines_layout.setContentsMargins(0, 0, 0, 0)
         self.lines_layout.setSpacing(10)
+
+        self.empty_hint = QLabel("No machines added.\\nClick “Add Machine” to begin.")
+        self.empty_hint.setObjectName("emptyHint")
+        self.empty_hint.setAlignment(Qt.AlignCenter)
+        self.empty_hint.setMinimumHeight(120)
+        self.lines_layout.addWidget(self.empty_hint)
+
         self.scroll.setWidget(container)
         left_l.addWidget(self.scroll, 1)
 
@@ -339,121 +411,188 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         left_l.addWidget(note)
 
-        body.addWidget(left, 2)
+        splitter.addWidget(left)
 
-        # Right panel
-        right = QVBoxLayout()
-        body.addLayout(right, 3)
+        # RIGHT (scrollable)
+        right_wrap = QWidget()
+        right_layout = QVBoxLayout(right_wrap)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_layout.addWidget(right_scroll)
+
+        right = QWidget()
+        right_scroll.setWidget(right)
+        right_l = QVBoxLayout(right)
+        right_l.setContentsMargins(14, 14, 14, 14)
+        right_l.setSpacing(12)
 
         cards = QHBoxLayout()
-        self.card_tech = Card("Technicians")
-        self.card_eng = Card("Engineers")
-        self.card_window = Card("Customer Install Window")
-        self.card_total = Card("Total Cost")
+        self.card_tech = Card("Technicians", "🧰")
+        self.card_eng = Card("Engineers", "🧑‍💻")
+        self.card_window = Card("Max Onsite", "⏱")
+        self.card_total = Card("Total Cost", "💲")
         cards.addWidget(self.card_tech)
         cards.addWidget(self.card_eng)
         cards.addWidget(self.card_window)
         cards.addWidget(self.card_total)
-        right.addLayout(cards)
+        right_l.addLayout(cards)
 
-        self.breakdown = QFrame()
-        self.breakdown.setObjectName("panel")
-        b = QVBoxLayout(self.breakdown)
-        b.setContentsMargins(14, 14, 14, 14)
+        self.alert = QLabel("")
+        self.alert.setObjectName("alert")
+        self.alert.setWordWrap(True)
+        self.alert.hide()
+        right_l.addWidget(self.alert)
 
-        self.lbl_break_title = QLabel("Cost Breakdown")
-        self.lbl_break_title.setObjectName("sectionTitle")
-        b.addWidget(self.lbl_break_title)
+        self.tbl_breakdown = self.make_table(["Model", "Qty", "Tech Days", "Eng Days", "Technicians", "Engineers"])
+        self.tbl_assign = self.make_table(["Machine Type", "Role", "Person #", "Assigned Days", "Cost"])
+        self.tbl_labor = self.make_table(["Role", "Daily Rate", "Total Days", "Personnel", "Total Cost"])
+        self.tbl_exp = self.make_table(["Expense", "Details", "Amount"])
 
-        self.lbl_summary = QLabel("Add at least one machine line.")
-        self.lbl_summary.setWordWrap(True)
-        b.addWidget(self.lbl_summary)
+        sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
+        sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
+        right_l.addWidget(sec_breakdown)
 
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(10)
+        sec_assign = Section("Personnel Assignments", "Each machine type has dedicated personnel.", "👥")
+        sec_assign.content_layout.addWidget(self.tbl_assign)
+        right_l.addWidget(sec_assign)
 
-        for i, t in enumerate(["Machine Configuration", "Labor", "Estimated Expenses"]):
-            lbl = QLabel(t)
-            lbl.setObjectName("subTitle")
-            grid.addWidget(lbl, 0, i)
+        sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
+        sec_labor.content_layout.addWidget(self.tbl_labor)
+        right_l.addWidget(sec_labor)
 
-        self.tbl_machines = QLabel("")
-        self.tbl_labor = QLabel("")
-        self.tbl_exp = QLabel("")
-        for w in [self.tbl_machines, self.tbl_labor, self.tbl_exp]:
-            w.setObjectName("mono")
-            w.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        sec_exp = Section("Estimated Expenses", "", "🧳")
+        self.lbl_exp_hdr = QLabel("")
+        self.lbl_exp_hdr.setObjectName("sectionSub")
+        self.lbl_exp_hdr.setWordWrap(True)
+        sec_exp.content_layout.addWidget(self.lbl_exp_hdr)
+        sec_exp.content_layout.addWidget(self.tbl_exp)
+        right_l.addWidget(sec_exp)
 
-        grid.addWidget(self.tbl_machines, 1, 0)
-        grid.addWidget(self.tbl_labor, 1, 1)
-        grid.addWidget(self.tbl_exp, 1, 2)
-
-        lbl_assign = QLabel("Workload Distribution")
-        lbl_assign.setObjectName("subTitle")
-        grid.addWidget(lbl_assign, 2, 0, 1, 3)
-        self.tbl_assign = QLabel("")
-        self.tbl_assign.setObjectName("mono")
-        self.tbl_assign.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        grid.addWidget(self.tbl_assign, 3, 0, 1, 3)
-
-        b.addLayout(grid)
-
-        btn_row = QHBoxLayout()
-        btn_row.addStretch(1)
+        bottom = QFrame()
+        bottom.setObjectName("totalBar")
+        bl = QHBoxLayout(bottom)
+        bl.setContentsMargins(14, 12, 14, 12)
+        self.lbl_total = QLabel("Estimated Total")
+        self.lbl_total.setObjectName("totalLabel")
+        self.lbl_total_val = QLabel("—")
+        self.lbl_total_val.setObjectName("totalValue")
+        bl.addWidget(self.lbl_total)
+        bl.addStretch(1)
+        bl.addWidget(self.lbl_total_val)
         self.btn_print = QPushButton("Print Quote…")
-        self.btn_print.clicked.connect(self.print_quote)
+        self.btn_print.clicked.connect(self.print_quote_preview)
         self.btn_print.setEnabled(False)
-        btn_row.addWidget(self.btn_print)
-        b.addLayout(btn_row)
+        bl.addWidget(self.btn_print)
+        right_l.addWidget(bottom)
 
-        right.addWidget(self.breakdown, 1)
+        splitter.addWidget(right_wrap)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
 
-        self.add_line()
         self.apply_theme()
+        self.reset_views()
+
+    def make_table(self, headers: List[str]) -> QTableWidget:
+        tbl = QTableWidget(0, len(headers))
+        tbl.setHorizontalHeaderLabels(headers)
+        tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tbl.setSelectionBehavior(QAbstractItemView.SelectRows)
+        tbl.setSelectionMode(QAbstractItemView.SingleSelection)
+        tbl.setAlternatingRowColors(True)
+        tbl.setObjectName("table")
+        tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        tbl.setMinimumHeight(120)
+        return tbl
 
     def apply_theme(self):
         blue = "#0B3D66"
         gold = "#D39A2C"
-        self.setStyleSheet(f"""
+        self.setStyleSheet(f\"\"\"
         QFrame#header {{ background: {blue}; color: white; border: none; }}
         QFrame#panel {{ background: white; border: 1px solid #E6E8EB; border-radius: 14px; }}
+        QLabel#panelTitle {{ font-size: 16px; font-weight: 800; color: #0F172A; }}
         QFrame#softBox {{ background: #FFF7EA; border: 1px solid #F0D8A8; border-radius: 12px; }}
-        QLabel#sectionTitle {{ font-size: 16px; font-weight: 700; color: #0F172A; }}
-        QLabel#subTitle {{ font-size: 13px; font-weight: 700; color: #0F172A; }}
         QLabel#note {{ color: #334155; font-size: 12px; }}
+        QLabel#emptyHint {{ color: #64748B; background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; }}
         QPushButton#primary {{
             background: {gold}; border: 0px; color: #0B1B2A;
-            padding: 10px 12px; border-radius: 10px; font-weight: 700;
+            padding: 10px 12px; border-radius: 10px; font-weight: 800;
         }}
         QPushButton {{
             padding: 8px 10px; border-radius: 10px;
             border: 1px solid #D6D9DD; background: #F8FAFC;
         }}
         QPushButton:disabled {{ color: #94A3B8; background: #F1F5F9; }}
-        QFrame#card {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; min-width: 190px; }}
-        QLabel#cardTitle {{ font-size: 12px; color: #475569; font-weight: 600; }}
-        QLabel#cardValue {{ font-size: 24px; color: #0F172A; font-weight: 800; }}
+        QFrame#card {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; min-width: 210px; }}
+        QLabel#cardIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 16px; }}
+        QLabel#cardTitle {{ font-size: 12px; color: #475569; font-weight: 700; }}
+        QLabel#cardValue {{ font-size: 24px; color: #0F172A; font-weight: 900; }}
         QLabel#cardSub {{ font-size: 12px; color: #475569; }}
-        QLabel#mono {{
-            font-family: Consolas, 'Courier New', monospace; font-size: 12px; color: #0F172A;
-            background: #FAFAFB; border: 1px solid #EEF0F2; border-radius: 10px; padding: 10px;
+        QFrame#section {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }}
+        QLabel#sectionIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 14px; }}
+        QLabel#sectionTitle {{ font-size: 15px; font-weight: 900; color: #0F172A; }}
+        QLabel#sectionSub {{ font-size: 12px; color: #475569; }}
+        QTableWidget#table {{
+            background: #FFFFFF;
+            border: 1px solid #EEF0F2;
+            border-radius: 12px;
+            gridline-color: #E2E8F0;
+            selection-background-color: #DBEAFE;
         }}
-        """)
+        QHeaderView::section {{
+            background: #F1F5F9;
+            padding: 8px;
+            border: 0px;
+            border-bottom: 1px solid #E2E8F0;
+            font-weight: 800;
+        }}
+        QFrame#totalBar {{ background: #F8FAFC; border: 1px solid #E6E8EB; border-radius: 14px; }}
+        QLabel#totalLabel {{ font-size: 13px; font-weight: 800; color: #0F172A; }}
+        QLabel#totalValue {{ font-size: 22px; font-weight: 900; color: #0B3D66; }}
+        QLabel#alert {{
+            background: #FEF2F2;
+            border: 1px solid #FCA5A5;
+            color: #7F1D1D;
+            padding: 10px;
+            border-radius: 12px;
+        }}
+        QFrame#machineLine {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 12px; }}
+        \"\"\")
+
+    def reset_views(self):
+        self.card_tech.set_value("0", "0 total days")
+        self.card_eng.set_value("0", "0 total days")
+        self.card_window.set_value(f"{self.spin_window.value()}", "")
+        self.card_total.set_value("—", "labor + expenses")
+        self.lbl_total_val.setText("—")
+        for tbl in [self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp]:
+            tbl.setRowCount(0)
+        self.lbl_exp_hdr.setText("")
+        self.btn_print.setEnabled(False)
+        self.alert.hide()
+        self.alert.setText("")
 
     def add_line(self):
+        if self.empty_hint is not None:
+            self.empty_hint.hide()
         ln = MachineLine(self.models_sorted, on_change=self.recalc, on_delete=self.delete_line)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
-        if len(self.lines) <= 1:
-            return
         self.lines.remove(ln)
         ln.setParent(None)
         ln.deleteLater()
-        self.recalc()
+        if len(self.lines) == 0:
+            self.empty_hint.show()
+            self.reset_views()
+        else:
+            self.recalc()
 
     def open_excel(self):
         fp, _ = QFileDialog.getOpenFileName(self, "Select Excel file", "", "Excel (*.xlsx)")
@@ -474,104 +613,83 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
 
-    # ---- core calculations ----
     def calc(self):
         selections = [ln.value() for ln in self.lines]
         selections = [s for s in selections if s.qty > 0]
         if not selections:
-            raise ValueError("No machines selected.")
+            raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
         window = int(self.spin_window.value())
 
-        # Rates: Tech/Eng regular time are hourly, converted to daily at 8 hrs/day
         tech_hr, _ = self.data.get_rate("tech. regular time")
         eng_hr, _ = self.data.get_rate("eng. regular time")
         hours_per_day = 8
         tech_day_rate = tech_hr * hours_per_day
         eng_day_rate = eng_hr * hours_per_day
 
-        tech_person_days: List[int] = []
-        eng_person_days: List[int] = []
         machine_rows = []
+        assignments: List[Assignment] = []
+        tech_all: List[int] = []
+        eng_all: List[int] = []
 
         for s in selections:
             mi = self.data.models[s.model]
-
             training_days = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if s.training_required else 0
 
-            # INSTALL-ONLY baseline from Excel (no training baked in)
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-
             eng_total = mi.eng_days_per_machine * s.qty
 
-            # Validation: single-machine commissioning (install + training if checked) must fit window
-            single_training = 1 if s.training_required else 0  # ceil(1/3)=1
+            single_training = 1 if s.training_required else 0
             if mi.tech_install_days_per_machine + single_training > window:
-                raise ValueError(
-                    f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window})."
-                )
+                raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
             if mi.eng_days_per_machine > window and mi.eng_days_per_machine > 0:
-                raise ValueError(
-                    f"{s.model}: Engineer days for a single machine ({mi.eng_days_per_machine}) exceeds the Customer Install Window ({window})."
-                )
+                raise ValueError(f"{s.model}: Engineer days for a single machine ({mi.eng_days_per_machine}) exceeds the Customer Install Window ({window}).")
 
-            # Dedicated staffing per model (no sharing across model types)
+            tech_headcount = 0
+            eng_headcount = 0
+
             if tech_total > 0:
                 tech_headcount = ceil_int(tech_total / window)
-                tech_person_days.extend(balanced_allocate(tech_total, tech_headcount))
+                tech_alloc = balanced_allocate(tech_total, tech_headcount)
+                tech_all.extend(tech_alloc)
+                for i, d in enumerate(tech_alloc, 1):
+                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
+
             if eng_total > 0:
                 eng_headcount = ceil_int(eng_total / window)
-                eng_person_days.extend(balanced_allocate(eng_total, eng_headcount))
+                eng_alloc = balanced_allocate(eng_total, eng_headcount)
+                eng_all.extend(eng_alloc)
+                for i, d in enumerate(eng_alloc, 1):
+                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
 
             machine_rows.append({
                 "model": s.model,
                 "qty": s.qty,
-                "tech_install_per_machine": mi.tech_install_days_per_machine,
                 "training_days": training_days,
                 "training_required": s.training_required,
                 "tech_total": tech_total,
-                "eng_per_machine": mi.eng_days_per_machine,
-                "eng_total": eng_total
+                "eng_total": eng_total,
+                "tech_headcount": tech_headcount,
+                "eng_headcount": eng_headcount
             })
 
-        tech = RoleTotals(
-            headcount=len(tech_person_days),
-            total_onsite_days=sum(tech_person_days),
-            onsite_days_by_person=tech_person_days,
-            day_rate=tech_day_rate,
-            labor_cost=float(sum(tech_person_days)) * tech_day_rate
-        )
-        eng = RoleTotals(
-            headcount=len(eng_person_days),
-            total_onsite_days=sum(eng_person_days),
-            onsite_days_by_person=eng_person_days,
-            day_rate=eng_day_rate,
-            labor_cost=float(sum(eng_person_days)) * eng_day_rate
-        )
+        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
+        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
 
-        # Expenses are based on person-days including travel in/out per person
-        trip_days_by_person = [d + TRAVEL_DAYS_PER_PERSON for d in tech_person_days] + [d + TRAVEL_DAYS_PER_PERSON for d in eng_person_days]
+        trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
         n_people = len(trip_days_by_person)
-        total_trip_days = sum(trip_days_by_person)  # person-days
+        total_trip_days = sum(trip_days_by_person)
         total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
-
-        def add_exp(lines, name, qty, unit, detail):
-            lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
 
         exp_lines: List[ExpenseLine] = []
 
-        # Airfare override
-        try:
-            _, _ = self.data.get_rate("airfare")
-        except KeyError:
-            pass
-        add_exp(exp_lines, "Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × ${OVERRIDE_AIRFARE_PER_PERSON:,.0f}")
+        def add_exp(name, qty, unit, detail):
+            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
 
-        # Baggage override (per day per person) — displayed as total person-days × rate
-        add_exp(exp_lines, "Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × ${OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON:,.0f}")
+        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
+        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
 
-        # Other expense lines from sheet (per day/person -> person-days)
         parking, _ = self.data.get_rate("parking")
         car, _ = self.data.get_rate("car rental")
         hotel, _ = self.data.get_rate("hotel")
@@ -579,22 +697,21 @@ class MainWindow(QMainWindow):
         prep, _ = self.data.get_rate("pre/post trip prep")
         travel_time_rate, _ = self.data.get_rate("travel time")
 
-        add_exp(exp_lines, "Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × ${parking:,.0f}")
-        add_exp(exp_lines, "Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × ${car:,.0f}")
-        add_exp(exp_lines, "Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × ${hotel:,.0f}")
-        add_exp(exp_lines, "Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × ${per_diem:,.0f}")
-        add_exp(exp_lines, "Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × ${prep:,.0f}")
-
-        # Travel time: 16 hours per person
+        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
+        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
+        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
+        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
+        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
         travel_hours = 16 * n_people
-        add_exp(exp_lines, "Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × ${travel_time_rate:,.0f}")
+        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
 
         exp_total = sum(l.extended for l in exp_lines)
-        max_onsite = max(tech_person_days + eng_person_days) if (tech_person_days or eng_person_days) else 0
+        max_onsite = max([a.onsite_days for a in assignments], default=0)
         grand_total = exp_total + tech.labor_cost + eng.labor_cost
 
         meta = {
             "machine_rows": machine_rows,
+            "assignments": assignments,
             "window": window,
             "max_onsite": max_onsite,
             "n_people": n_people,
@@ -605,232 +722,223 @@ class MainWindow(QMainWindow):
         return tech, eng, exp_lines, meta
 
     def recalc(self):
+        if len(self.lines) == 0:
+            self.reset_views()
+            return
         try:
             tech, eng, exp_lines, meta = self.calc()
+            self.alert.hide()
 
-            self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total onsite days")
-            self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total onsite days")
-            self.card_window.set_value(f"{meta['window']} days", f"Estimated duration: {meta['max_onsite']} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days")
-            self.card_total.set_value(f"${meta['grand_total']:,.0f}", "labor + expenses")
+            self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total days")
+            self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
+            self.card_window.set_value(f"{meta['window']}", f"{meta['max_onsite']} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days")
+            self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
+            self.lbl_total_val.setText(money(meta["grand_total"]))
 
-            self.lbl_summary.setText(
-                f"Expenses include {TRAVEL_DAYS_PER_PERSON} travel days per person (travel-in + travel-out). "
-                f"Machine types require specialized skills: personnel are not shared across different machine types."
+            rows = meta["machine_rows"]
+            self.tbl_breakdown.setRowCount(len(rows))
+            for r_i, r in enumerate(rows):
+                tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
+                eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+                vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
+                        "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
+                        "—" if r["eng_headcount"] == 0 else str(r["eng_headcount"])]
+                for c, v in enumerate(vals):
+                    it = QTableWidgetItem(v)
+                    if c in [1, 4, 5]:
+                        it.setTextAlignment(Qt.AlignCenter)
+                    if c == 2 and r["training_required"]:
+                        it.setForeground(Qt.darkYellow)
+                    self.tbl_breakdown.setItem(r_i, c, it)
+
+            assigns: List[Assignment] = meta["assignments"]
+            self.tbl_assign.setRowCount(len(assigns))
+            for i, a in enumerate(assigns):
+                vals = [a.model, a.role, str(a.person_num), str(a.onsite_days), money(a.cost)]
+                for c, v in enumerate(vals):
+                    it = QTableWidgetItem(v)
+                    if c in [2, 3]:
+                        it.setTextAlignment(Qt.AlignCenter)
+                    if c == 4:
+                        it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.tbl_assign.setItem(i, c, it)
+
+            self.tbl_labor.setRowCount(2)
+            labor_rows = [
+                ("Technician", money(tech.day_rate) + "/day", str(tech.total_onsite_days), str(tech.headcount), money(tech.labor_cost)),
+                ("Engineer", money(eng.day_rate) + "/day", str(eng.total_onsite_days), str(eng.headcount), money(eng.labor_cost)),
+            ]
+            for r_i, row in enumerate(labor_rows):
+                for c, v in enumerate(row):
+                    it = QTableWidgetItem(v)
+                    if c in [2, 3]:
+                        it.setTextAlignment(Qt.AlignCenter)
+                    if c == 4:
+                        it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.tbl_labor.setItem(r_i, c, it)
+
+            self.lbl_exp_hdr.setText(
+                f"Expenses are calculated using person-days, including {TRAVEL_DAYS_PER_PERSON} travel days per person."
             )
+            self.tbl_exp.setRowCount(len(exp_lines) + 1)
+            for i, l in enumerate(exp_lines):
+                vals = [l.description, l.details, money(l.extended)]
+                for c, v in enumerate(vals):
+                    it = QTableWidgetItem(v)
+                    if c == 2:
+                        it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    self.tbl_exp.setItem(i, c, it)
 
-            # Machine block
-            lines = []
-            for r in meta["machine_rows"]:
-                tech_disp = f"{r['tech_install_per_machine']} (incl. Train)" if r["training_required"] else f"{r['tech_install_per_machine']} (training excluded)"
-                train_note = (f"Train days: {r['training_days']} (1 per {TRAINING_MACHINES_PER_DAY} machines)"
-                              if r["training_required"] else "Train days: 0 (excluded by customer request)")
-                lines.append(
-                    f"- {r['model']}  Qty {r['qty']}  |  Tech Install Days: {tech_disp}  |  Eng Days: {r['eng_per_machine']}\n"
-                    f"  Tech total: {r['tech_total']}  ({train_note})  |  Eng total: {r['eng_total']}"
-                )
-            self.tbl_machines.setText("\n".join(lines))
-
-            labor_txt = (
-                f"Tech. Regular Time: {tech.total_onsite_days} day(s) × ${tech.day_rate:,.0f}/day = ${tech.labor_cost:,.0f}\n"
-                f"Eng. Regular Time:  {eng.total_onsite_days} day(s) × ${eng.day_rate:,.0f}/day = ${eng.labor_cost:,.0f}\n"
-                f"Labor Subtotal: ${tech.labor_cost + eng.labor_cost:,.0f}"
-            )
-            self.tbl_labor.setText(labor_txt)
-
-            exp_txt = [f"Includes {meta['total_trip_days']:.0f} total trip day(s) across {meta['n_people']} person(s)"]
-            for l in exp_lines:
-                exp_txt.append(f"{l.description}: {l.details} = ${l.extended:,.0f}")
-            exp_txt.append(f"Expenses Subtotal: ${meta['exp_total']:,.0f}")
-            self.tbl_exp.setText("\n".join(exp_txt))
-
-            assign_lines = []
-            if tech.headcount:
-                assign_lines.append("Technicians:")
-                for i, d in enumerate(tech.onsite_days_by_person, 1):
-                    assign_lines.append(f"  Tech {i}: {d} day(s) onsite")
-            if eng.headcount:
-                assign_lines.append("Engineers:")
-                for i, d in enumerate(eng.onsite_days_by_person, 1):
-                    assign_lines.append(f"  Eng {i}: {d} day(s) onsite")
-            self.tbl_assign.setText("\n".join(assign_lines))
+            sub_row = len(exp_lines)
+            self.tbl_exp.setItem(sub_row, 0, QTableWidgetItem("Expenses Subtotal"))
+            self.tbl_exp.setItem(sub_row, 1, QTableWidgetItem("—"))
+            it = QTableWidgetItem(money(meta["exp_total"]))
+            it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.tbl_exp.setItem(sub_row, 2, it)
 
             self.btn_print.setEnabled(True)
 
         except Exception as e:
-            self.card_tech.set_value("—", "")
-            self.card_eng.set_value("—", "")
-            self.card_window.set_value(f"{self.spin_window.value()} days", "")
-            self.card_total.set_value("—", "")
-            self.tbl_machines.setText("")
-            self.tbl_labor.setText("")
-            self.tbl_exp.setText("")
-            self.tbl_assign.setText("")
-            self.lbl_summary.setText(str(e))
-            self.btn_print.setEnabled(False)
+            self.reset_views()
+            self.alert.setText(str(e))
+            self.alert.show()
 
-    # ---- PDF quote ----
-    def print_quote(self):
+    def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: TDict[str, object]) -> str:
+        from datetime import date, timedelta
+        today = date.today()
+        validity = today + timedelta(days=30)
+        date_str = f"{today:%B} {today.day}, {today:%Y}"
+        valid_str = f"{validity:%B} {validity.day}, {validity:%Y}"
+
+        logo_html = ""
+        if LOGO_PATH.exists():
+            logo_html = f'<img src="file:///{str(LOGO_PATH).replace(\"\\\\\", \"/\")}" style="height:52px;" />'
+
+        mr = []
+        for r in meta["machine_rows"]:
+            tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
+            eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+            mr.append(f\"\"\"<tr>
+                <td>{r['model']}</td>
+                <td style="text-align:center;">{r['qty']}</td>
+                <td>{tech_disp}</td>
+                <td style="text-align:center;">{eng_disp}</td>
+                <td style="text-align:center;">{r['tech_headcount'] if r['tech_headcount'] else "—"}</td>
+                <td style="text-align:center;">{r['eng_headcount'] if r['eng_headcount'] else "—"}</td>
+            </tr>\"\"\")
+
+        exp_rows = []
+        for l in exp_lines:
+            exp_rows.append(f\"\"\"<tr>
+                <td>{l.description}</td>
+                <td>{l.details}</td>
+                <td style="text-align:right;">{money(l.extended)}</td>
+            </tr>\"\"\")
+
+        labor_sub = tech.labor_cost + eng.labor_cost
+
+        req_html = ""
+        if self.data.requirements:
+            li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
+            req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
+
+        html = f\"\"\"<html><head><meta charset="utf-8" />
+        <style>
+            body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
+            .topbar {{ border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }}
+            .title {{ font-size: 18pt; font-weight: 800; color: #0B3D66; margin: 0; }}
+            .subtitle {{ margin: 4px 0 0 0; color: #475569; }}
+            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
+            .two {{ display: table; width: 100%; }}
+            .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
+            h3 {{ color: #0B3D66; margin: 18px 0 8px 0; }}
+            .right {{ text-align: right; }}
+            .muted {{ color: #475569; }}
+            .total {{ font-size: 16pt; font-weight: 900; color: #0B3D66; }}
+        </style></head><body>
+            <div class="topbar">
+                <div style="float:right;">{logo_html}</div>
+                <p class="title">Commissioning Budget Quote</p>
+                <p class="subtitle muted">Service Estimate</p>
+                <div style="clear:both;"></div>
+            </div>
+
+            <div class="two">
+                <div class="box">
+                    <b>DATE</b><br/>{date_str}<br/><br/>
+                    <b>TOTAL PERSONNEL</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)
+                </div>
+                <div class="box">
+                    <b>QUOTE VALIDITY</b><br/>{valid_str}<br/><br/>
+                    <b>ESTIMATED DURATION</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
+                </div>
+            </div>
+
+            <h3>Machine Breakdown</h3>
+            <table class="grid">
+                <tr><th>Model</th><th style="text-align:center;">Qty</th><th>Tech Days</th><th style="text-align:center;">Eng Days</th>
+                    <th style="text-align:center;">Technicians</th><th style="text-align:center;">Engineers</th></tr>
+                {''.join(mr)}
+            </table>
+
+            <h3>Labor Costs</h3>
+            <table class="grid">
+                <tr><th>Item</th><th class="right">Extended</th></tr>
+                <tr><td>Tech. Regular Time ({tech.total_onsite_days} days × {money(tech.day_rate)}/day)</td><td class="right">{money(tech.labor_cost)}</td></tr>
+                <tr><td>Eng. Regular Time ({eng.total_onsite_days} days × {money(eng.day_rate)}/day)</td><td class="right">{money(eng.labor_cost)}</td></tr>
+                <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
+            </table>
+
+            <h3>Estimated Expenses</h3>
+            <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
+            <table class="grid">
+                <tr><th>Expense</th><th>Details</th><th class="right">Amount</th></tr>
+                {''.join(exp_rows)}
+                <tr><td><b>Expenses Subtotal</b></td><td>—</td><td class="right"><b>{money(meta["exp_total"])}</b></td></tr>
+            </table>
+
+            <h3>Estimated Total</h3>
+            <div class="box">
+                <span class="total">{money(meta["grand_total"])}</span><br/>
+                <span class="muted">Labor ({money(labor_sub)}) + Expenses ({money(meta["exp_total"])})</span>
+            </div>
+
+            <h3>Terms & Conditions</h3>
+            <ul>
+                <li><b>Pricing & Quote Expiration:</b> Prices shown reflect an estimate of days and expenses. Any additional time will be billed at the rates shown. Quote valid for 30 days.</li>
+                <li><b>Customer Install Window:</b> No individual technician or engineer is assigned more than {meta["window"]} onsite days per trip.</li>
+                <li><b>Training:</b> Training days are calculated at 1 day per {TRAINING_MACHINES_PER_DAY} machines of the same model type. Training can be excluded per machine if not required (customer request only).</li>
+                <li><b>Machine-Specific Skills:</b> Each machine type requires technicians with specialized skills. Personnel are not shared across different machine types.</li>
+                <li><b>Travel Days:</b> Expenses include {TRAVEL_DAYS_PER_PERSON} travel days (1 day travel-in + 1 day travel-out) in addition to onsite work days.</li>
+            </ul>
+            {req_html}
+        </body></html>\"\"\"
+        return html
+
+    def print_quote_preview(self):
         try:
             tech, eng, exp_lines, meta = self.calc()
         except Exception as e:
             QMessageBox.critical(self, "Cannot print", str(e))
             return
 
-        fp, _ = QFileDialog.getSaveFileName(self, "Save PDF", "Commissioning Budget Quote.pdf", "PDF (*.pdf)")
-        if not fp:
-            return
-        try:
-            self._build_pdf(Path(fp), tech, eng, exp_lines, meta)
-            QMessageBox.information(self, "Saved", f"Quote saved:\n{fp}")
-        except Exception as e:
-            QMessageBox.critical(self, "PDF error", str(e))
+        html = self.build_quote_html(tech, eng, exp_lines, meta)
+        doc = QTextDocument()
+        doc.setHtml(html)
 
-    def _build_pdf(self, out: Path, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: Dict[str, object]):
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle("Title", parent=styles["Title"], fontSize=22, leading=26, textColor=colors.HexColor("#0B3D66"))
-        h_style = ParagraphStyle("H", parent=styles["Heading2"], fontSize=13, textColor=colors.HexColor("#0B3D66"), spaceBefore=10, spaceAfter=6)
-        small = ParagraphStyle("Small", parent=styles["Normal"], fontSize=9, leading=12, textColor=colors.HexColor("#334155"))
-        normal = ParagraphStyle("Normal2", parent=styles["Normal"], fontSize=10, leading=13)
+        printer = QPrinter(QPrinter.HighResolution)
+        printer.setPageSize(QPrinter.Letter)
 
-        doc = SimpleDocTemplate(str(out), pagesize=letter, leftMargin=0.75*inch, rightMargin=0.75*inch, topMargin=0.65*inch, bottomMargin=0.65*inch)
-        story = []
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Print Preview - Commissioning Budget Quote")
+        preview.paintRequested.connect(lambda p: doc.print_(p))
+        preview.exec()
 
-        # Header with logo
-        left = Paragraph("<b>Service Estimate</b><br/>Commissioning Budget Quote", title_style)
-        logo = RLImage(str(LOGO_PATH), width=2.2*inch, height=0.75*inch) if LOGO_PATH.exists() else Paragraph("", normal)
-        t = Table([[left, logo]], colWidths=[4.4*inch, 2.6*inch])
-        t.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"), ("ALIGN",(1,0),(1,0),"RIGHT"), ("BOTTOMPADDING",(0,0),(-1,-1),8)]))
-        story.append(t)
-        story.append(Spacer(1, 6))
-        story.append(Table([[""]], colWidths=[7.0*inch], style=[("LINEBELOW",(0,0),(-1,-1),1,colors.HexColor("#0B3D66"))]))
-        story.append(Spacer(1, 16))
-
-        today = datetime.date.today()
-        validity = today + datetime.timedelta(days=30)
-
-        total_personnel = f"{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)"
-        est_dur = f"{meta['max_onsite']} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days"
-
-        info2 = Table([
-            [Paragraph("<b>DATE</b><br/>" + today.strftime("%B %-d, %Y"), normal),
-             Paragraph("<b>QUOTE VALIDITY</b><br/>" + validity.strftime("%B %-d, %Y"), normal)],
-            [Paragraph("<b>TOTAL PERSONNEL</b><br/>" + total_personnel, normal),
-             Paragraph("<b>ESTIMATED DURATION</b><br/>" + est_dur, normal)],
-        ], colWidths=[3.4*inch, 3.4*inch])
-        info2.setStyle(TableStyle([("FONTSIZE",(0,0),(-1,-1),10), ("BOTTOMPADDING",(0,0),(-1,-1),10)]))
-        story.append(info2)
-        story.append(Spacer(1, 10))
-
-        scope_text = (f"This quote reflects <b>{tech.headcount}</b> technician(s) and <b>{eng.headcount}</b> engineer(s) working "
-                      f"<b>{meta['max_onsite']}</b> day(s) onsite for commissioning and training of the equipment listed below. "
-                      f"Expenses include {TRAVEL_DAYS_PER_PERSON} travel days (travel-in and travel-out).")
-        scope_tbl = Table([[Paragraph("<b>Scope of Work</b>", h_style)], [Paragraph(scope_text, normal)]], colWidths=[6.8*inch])
-        scope_tbl.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(0,0),colors.HexColor("#FFF7EA")),
-            ("BOX",(0,0),(-1,-1),1,colors.HexColor("#D39A2C")),
-            ("BACKGROUND",(0,1),(0,1),colors.HexColor("#FFFDF7")),
-            ("LEFTPADDING",(0,0),(-1,-1),10),
-            ("RIGHTPADDING",(0,0),(-1,-1),10),
-            ("TOPPADDING",(0,0),(-1,-1),8),
-            ("BOTTOMPADDING",(0,0),(-1,-1),8),
-        ]))
-        story.append(scope_tbl)
-        story.append(Spacer(1, 14))
-
-        # Machine table
-        story.append(Paragraph("Machine Configuration", h_style))
-        rows = [["Model", "Qty", "Tech Install Days", "Eng Days", "Personnel"]]
-        window = int(meta["window"])
-        for r in meta["machine_rows"]:
-            tech_disp = f"{r['tech_install_per_machine']} (incl. Train)" if r["training_required"] else f"{r['tech_install_per_machine']} (training excluded)"
-            eng_disp = "—" if r["eng_per_machine"] == 0 else str(r["eng_per_machine"])
-            tech_head = ceil_int(r["tech_total"]/window) if r["tech_total"] > 0 else 0
-            eng_head = ceil_int(r["eng_total"]/window) if r["eng_total"] > 0 else 0
-            pers = []
-            if tech_head: pers.append(f"{tech_head} Tech")
-            if eng_head: pers.append(f"{eng_head} Eng")
-            rows.append([r["model"], str(r["qty"]), tech_disp, eng_disp, ", ".join(pers) if pers else "—"])
-        mt = Table(rows, colWidths=[1.4*inch, 0.8*inch, 2.2*inch, 1.2*inch, 1.2*inch])
-        mt.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#F1F5F9")),
-            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),9),
-            ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#E2E8F0")),
-            ("ALIGN",(1,1),(1,-1),"CENTER"),
-            ("ALIGN",(3,1),(4,-1),"CENTER"),
-            ("BOTTOMPADDING",(0,0),(-1,-1),6),
-            ("TOPPADDING",(0,0),(-1,-1),6),
-        ]))
-        story.append(mt)
-        story.append(Spacer(1, 14))
-
-        # Labor
-        story.append(Paragraph("Labor Costs", h_style))
-        labor_rows = [["Item", "Quantity", "Unit Price", "Extended Price"]]
-        if tech.total_onsite_days:
-            labor_rows.append(["Tech. Regular Time", f"{tech.total_onsite_days} days", f"${tech.day_rate:,.0f}/day", f"${tech.labor_cost:,.0f}"])
-        if eng.total_onsite_days:
-            labor_rows.append(["Eng. Regular Time", f"{eng.total_onsite_days} days", f"${eng.day_rate:,.0f}/day", f"${eng.labor_cost:,.0f}"])
-        labor_sub = tech.labor_cost + eng.labor_cost
-        labor_rows.append(["", "", "<b>Labor Subtotal</b>", f"<b>${labor_sub:,.0f}</b>"])
-        lt = Table(labor_rows, colWidths=[2.6*inch, 1.3*inch, 1.4*inch, 1.5*inch])
-        lt.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#F1F5F9")),
-            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),9),
-            ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#E2E8F0")),
-            ("ALIGN",(1,1),(3,-2),"RIGHT"),
-            ("ALIGN",(2,-1),(3,-1),"RIGHT"),
-        ]))
-        story.append(lt)
-        story.append(Spacer(1, 14))
-
-        # Expenses
-        story.append(Paragraph("Estimated Expenses", h_style))
-        story.append(Paragraph(f"Includes {int(meta['total_trip_days'])} total trip day(s) across personnel (onsite + travel days).", small))
-        story.append(Spacer(1, 6))
-        exp_rows = [["Item", "Details", "Extended Price"]]
-        for l in exp_lines:
-            exp_rows.append([l.description, l.details, f"${l.extended:,.0f}"])
-        exp_rows.append(["", "<b>Expenses Subtotal</b>", f"<b>${meta['exp_total']:,.0f}</b>"])
-        et = Table(exp_rows, colWidths=[1.7*inch, 3.9*inch, 1.2*inch])
-        et.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#F1F5F9")),
-            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),9),
-            ("GRID",(0,0),(-1,-1),0.5,colors.HexColor("#E2E8F0")),
-            ("ALIGN",(2,1),(2,-1),"RIGHT"),
-        ]))
-        story.append(et)
-        story.append(Spacer(1, 14))
-
-        # Total
-        total_tbl = Table([[Paragraph("<b>ESTIMATED TOTAL</b>", h_style), Paragraph(f"<b>${meta['grand_total']:,.0f}</b>", h_style)]], colWidths=[5.3*inch, 1.5*inch])
-        total_tbl.setStyle(TableStyle([("ALIGN",(1,0),(1,0),"RIGHT"), ("LINEABOVE",(0,0),(-1,0),1,colors.HexColor("#E2E8F0"))]))
-        story.append(total_tbl)
-        story.append(Spacer(1, 10))
-
-        # Terms (no payment terms)
-        story.append(Paragraph("Terms & Conditions", h_style))
-        tc_lines = [
-            "<b>Pricing & Quote Expiration:</b> Prices shown reflect an estimate of hours and expenses. Any additional hours or days will be billed at the rates shown above. Quote valid for 30 days.",
-            f"<b>Customer Install Window:</b> No individual technician or engineer is assigned more than {meta['window']} onsite days per trip.",
-            f"<b>Training:</b> Training days are calculated at 1 day per {TRAINING_MACHINES_PER_DAY} machines of the same model type. Training can be excluded per machine if not required (customer request only).",
-            "<b>Machine-Specific Skills:</b> Each machine type requires technicians with specialized skills. Personnel are not shared across different machine types.",
-            f"<b>Travel Days:</b> Expenses include {TRAVEL_DAYS_PER_PERSON} travel days (1 day travel-in + 1 day travel-out) in addition to onsite work days.",
-        ]
-        for s in tc_lines:
-            story.append(Paragraph(s, normal))
-            story.append(Spacer(1, 4))
-
-        if self.data.requirements:
-            story.append(Spacer(1, 8))
-            story.append(Paragraph("Requirements & Assumptions", h_style))
-            for s in self.data.requirements:
-                story.append(Paragraph(s, small))
-                story.append(Spacer(1, 2))
-
-        doc.build(story)
+    def closeEvent(self, event):
+        event.accept()
 
 
 def main():

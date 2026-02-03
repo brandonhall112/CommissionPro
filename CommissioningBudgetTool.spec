@@ -1,6 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
 from pathlib import Path
-
 block_cipher = None
 APP_DIR = Path(SPECPATH)
 
@@ -9,7 +8,7 @@ a = Analysis(
     pathex=[str(APP_DIR)],
     binaries=[],
     datas=[(str(APP_DIR / "assets"), "assets")],
-    hiddenimports=["PySide6.QtSvg", "PySide6.QtXml"],
+    hiddenimports=["PySide6.QtSvg", "PySide6.QtXml", "PySide6.QtPrintSupport"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -17,9 +16,7 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
-
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
 exe = EXE(
     pyz,
     a.scripts,
