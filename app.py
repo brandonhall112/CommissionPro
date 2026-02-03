@@ -896,129 +896,154 @@ class MainWindow(QMainWindow):
         except Exception:
             return
 
-    def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: TDict[str, object]) -> str:
-        from datetime import date, timedelta
-        today = date.today()
-        validity = today + timedelta(days=30)
-        date_str = f"{today:%B} {today.day}, {today:%Y}"
-        valid_str = f"{validity:%B} {validity.day}, {validity:%Y}"
 
-        logo_html = ""
-        if LOGO_PATH.exists():
-            try:
-                b = LOGO_PATH.read_bytes()
-                b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:16px; float:right;" />'
-            except Exception:
-                logo_html = ""
+def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: TDict[str, object]) -> str:
+    """Build the customer-facing printable quote HTML."""
+    today = date.today()
+    validity = today + timedelta(days=30)
+    date_str = f"{today:%B} {today.day}, {today:%Y}"
+    valid_str = f"{validity:%B} {validity.day}, {validity:%Y}"
 
-        mr = []
-        for r in meta["machine_rows"]:
-            tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-            if r["eng_total"] == 0:
-                    eng_disp = "—"
-                else:
-                    eng_train = r["training_days"] if (r.get("training_required") and r["eng_total"] > 0) else 0
-                    eng_disp = f'{r["eng_total"]} (incl. {eng_train} Train)' if (eng_train and r.get("training_required")) else str(r["eng_total"])
-            mr.append(f"""<tr>
-                <td>{r['model']}</td>
-                <td style="text-align:center;">{r['qty']}</td>
-                <td>{tech_disp}</td>
-                <td style="text-align:center;">{eng_disp}</td>
-                <td style="text-align:center;">{r['tech_headcount'] if r['tech_headcount'] else "—"}</td>
-                <td style="text-align:center;">{r['eng_headcount'] if r['eng_headcount'] else "—"}</td>
-            </tr>""")
+    # Logo (embedded base64 so it works in packaged EXE)
+    logo_html = ""
+    if LOGO_PATH.exists():
+        try:
+            b64 = base64.b64encode(LOGO_PATH.read_bytes()).decode("ascii")
+            # Smaller logo, right-aligned
+            logo_html = f'<img src="data:image/png;base64,{b64}" style="height:16px; float:right;" />'
+        except Exception:
+            logo_html = ""
 
-        exp_rows = []
-        for l in exp_lines:
-            exp_rows.append(f"""<tr>
-                <td>{l.description}</td>
-                <td>{l.details}</td>
-                <td style="text-align:right;">{money(l.extended)}</td>
-            </tr>""")
+    # Machine rows
+    mr_rows = []
+    for r in meta.get("machine_rows", []):
+        tech_disp = (
+            f"{r['tech_total']} (incl. {r['training_days']} Train)" if r.get("training_required") else f"{r['tech_total']} (training excluded)"
+        )
+        if r.get("eng_total", 0) == 0:
+            eng_disp = "—"
+        else:
+            eng_train = r.get("training_days", 0) if r.get("training_required") else 0
+            eng_disp = f"{r['eng_total']} (incl. {eng_train} Train)" if eng_train else str(r["eng_total"])
+            if not r.get("training_required"):
+                eng_disp = f"{r['eng_total']} (training excluded)"
 
-        labor_sub = tech.labor_cost + eng.labor_cost
+        mr_rows.append(
+            "\n".join(
+                [
+                    "<tr>",
+                    f"  <td>{r['model']}</td>",
+                    f"  <td style='text-align:center;'>{r['qty']}</td>",
+                    f"  <td>{tech_disp}</td>",
+                    f"  <td style='text-align:center;'>{eng_disp}</td>",
+                    f"  <td style='text-align:center;'>{r['tech_headcount'] if r.get('tech_headcount') else '—'}</td>",
+                    f"  <td style='text-align:center;'>{r['eng_headcount'] if r.get('eng_headcount') else '—'}</td>",
+                    "</tr>",
+                ]
+            )
+        )
+    machine_rows_html = "\n".join(mr_rows)
 
-        req_html = ""
-        if self.data.requirements:
-            li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
-            req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
+    # Expense rows
+    exp_rows = []
+    for l in exp_lines:
+        exp_rows.append(
+            "\n".join(
+                [
+                    "<tr>",
+                    f"  <td>{l.description}</td>",
+                    f"  <td>{l.details}</td>",
+                    f"  <td style='text-align:right;'>{money(l.extended)}</td>",
+                    "</tr>",
+                ]
+            )
+        )
+    exp_rows_html = "\n".join(exp_rows)
 
-        html = f"""<html><head><meta charset="utf-8" />
-        <style>
-            body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }}
-            .title {{ font-size: 18pt; font-weight: 800; color: #0B3D66; margin: 0; }}
-            .subtitle {{ margin: 4px 0 0 0; color: #5E6366; }}
-            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
-            .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
-            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
-            .two {{ display: table; width: 100%; }}
-            .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            h3 {{ color: #0B3D66; margin: 18px 0 8px 0; }}
-            .right {{ text-align: right; }}
-            .muted {{ color: #5E6366; }}
-            .total {{ font-size: 16pt; font-weight: 900; color: #0B3D66; }}
-        </style></head><body>
-            <div class="topbar">
-                <div style="float:right;">{logo_html}</div>
-                <p class="title">Commissioning Budget Quote</p>
-                <p class="subtitle muted">Service Estimate</p>
-                <div style="clear:both;"></div>
-            </div>
+    labor_sub = tech.labor_cost + eng.labor_cost
+    grand_total = labor_sub + float(meta.get("exp_total", 0.0))
 
-            <div class="two">
-                <div class="box">
-                    <b>DATE</b><br/>{date_str}<br/><br/>
-                    <b>TOTAL PERSONNEL</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)
-                </div>
-                <div class="box">
-                    <b>QUOTE VALIDITY</b><br/>{valid_str}<br/><br/>
-                    <b>ESTIMATED DURATION</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
-                </div>
-            </div>
+    # Requirements/assumptions list
+    req_html = ""
+    if getattr(self.data, "requirements", None):
+        li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
+        req_html = f"<h3>Requirements &amp; Assumptions</h3><ul>{li}</ul>"
 
-            <h3>Machine Breakdown</h3>
-            <table class="grid">
-                <tr><th>Model</th><th style="text-align:center;">Qty</th><th>Tech Days</th><th style="text-align:center;">Eng Days</th>
-                    <th style="text-align:center;">Technicians</th><th style="text-align:center;">Engineers</th></tr>
-                {''.join(mr)}
-            </table>
+    css = """<style>
+        body { font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }
+        .topbar { border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }
+        .title { font-size: 18pt; font-weight: 800; color: #0B3D66; margin: 0; }
+        .subtitle { margin: 4px 0 0 0; color: #5E6366; }
+        .grid { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .grid th { background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }
+        .grid td { padding: 8px; border-bottom: 1px solid #E2E8F0; }
+        h3 { color: #0B3D66; margin: 18px 0 8px 0; }
+        .right { text-align: right; }
+        .muted { color: #5E6366; }
+        .total { font-size: 16pt; font-weight: 900; color: #0B3D66; }
+    </style>"""
 
-            <h3>Labor Costs</h3>
-            <table class="grid">
-                <tr><th>Item</th><th class="right">Extended</th></tr>
-                <tr><td>Tech. Regular Time ({tech.total_onsite_days} days × {money(tech.day_rate)}/day)</td><td class="right">{money(tech.labor_cost)}</td></tr>
-                <tr><td>Eng. Regular Time ({eng.total_onsite_days} days × {money(eng.day_rate)}/day)</td><td class="right">{money(eng.labor_cost)}</td></tr>
-                <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
-            </table>
+    html = """<html><head><meta charset="utf-8" />
+    __CSS__
+    </head><body>
+        <div class="topbar">
+            <div>__LOGO__</div>
+            <h1 class="title">Commissioning Budget Quote</h1>
+            <p class="subtitle">Date: __DATE__ &nbsp; | &nbsp; Quote Valid Through: __VALID__</p>
+        </div>
 
-            <h3>Estimated Expenses</h3>
-            <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
-            <table class="grid">
-                <tr><th>Expense</th><th>Details</th><th class="right">Amount</th></tr>
-                {''.join(exp_rows)}
-                <tr><td><b>Expenses Subtotal</b></td><td>—</td><td class="right"><b>{money(meta["exp_total"])}</b></td></tr>
-            </table>
+        <h3>Machine Configuration</h3>
+        <table class="grid">
+            <thead>
+                <tr>
+                    <th>Model</th><th style="text-align:center;">Qty</th><th>Technician Days</th><th style="text-align:center;">Engineer Days</th>
+                    <th style="text-align:center;">Techs</th><th style="text-align:center;">Engs</th>
+                </tr>
+            </thead>
+            <tbody>
+                __MACHINE_ROWS__
+            </tbody>
+        </table>
 
-            <h3>Estimated Total</h3>
-            <div class="box">
-                <span class="total">{money(meta["grand_total"])}</span><br/>
-                <span class="muted">Labor ({money(labor_sub)}) + Expenses ({money(meta["exp_total"])})</span>
-            </div>
+        <h3>Labor</h3>
+        <table class="grid">
+            <tbody>
+                <tr><td>Technician Labor</td><td class="right">__TECH_LABOR__</td></tr>
+                <tr><td>Engineer Labor</td><td class="right">__ENG_LABOR__</td></tr>
+                <tr><td><b>Labor Subtotal</b></td><td class="right"><b>__LABOR_SUB__</b></td></tr>
+            </tbody>
+        </table>
 
-            <h3>Terms & Conditions</h3>
-            <ul>
-                <li><b>Pricing & Quote Expiration:</b> Prices shown reflect an estimate of days and expenses. Any additional time will be billed at the rates shown. Quote valid for 30 days.</li>
-                <li><b>Customer Install Window:</b> No individual technician or engineer is assigned more than {meta["window"]} onsite days per trip.</li>
-                <li><b>Training:</b> Training days are calculated at 1 day per {TRAINING_MACHINES_PER_DAY} machines of the same model type. Training can be excluded per machine if not required (customer request only).</li>
-                <li><b>Machine-Specific Skills:</b> Each machine type requires technicians with specialized skills. Personnel are not shared across different machine types.</li>
-                <li><b>Travel Days:</b> Expenses include {TRAVEL_DAYS_PER_PERSON} travel days (1 day travel-in + 1 day travel-out) in addition to onsite work days.</li>
-            </ul>
-            {req_html}
-        </body></html>"""
-        return html
+        <h3>Estimated Expenses</h3>
+        <table class="grid">
+            <thead><tr><th>Description</th><th>Details</th><th class="right">Amount</th></tr></thead>
+            <tbody>
+                __EXP_ROWS__
+                <tr><td><b>Expenses Subtotal</b></td><td></td><td class="right"><b>__EXP_SUB__</b></td></tr>
+            </tbody>
+        </table>
+
+        <h3>Total</h3>
+        <div class="total right">__GRAND__</div>
+
+        __REQ_HTML__
+    </body></html>"""
+
+    html = (
+        html.replace("__CSS__", css)
+            .replace("__LOGO__", logo_html)
+            .replace("__DATE__", date_str)
+            .replace("__VALID__", valid_str)
+            .replace("__MACHINE_ROWS__", machine_rows_html or "<tr><td colspan='6' class='muted'>No machines selected</td></tr>")
+            .replace("__TECH_LABOR__", money(tech.labor_cost))
+            .replace("__ENG_LABOR__", money(eng.labor_cost))
+            .replace("__LABOR_SUB__", money(labor_sub))
+            .replace("__EXP_ROWS__", exp_rows_html)
+            .replace("__EXP_SUB__", money(float(meta.get("exp_total", 0.0))))
+            .replace("__GRAND__", money(grand_total))
+            .replace("__REQ_HTML__", req_html)
+    )
+    return html
 
     def print_quote_preview(self):
         try:
