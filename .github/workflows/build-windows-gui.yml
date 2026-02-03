@@ -15,11 +15,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
+      - name: Sanitize app.py (defensive)
+        shell: pwsh
+        run: |
+          $p = "app.py"
+          $t = Get-Content $p -Raw
+          $t = $t -replace '\\"\\"\\"','"""'
+          $t = $t -replace '\\"""','"""'
+          Set-Content -Path $p -Value $t -NoNewline
+
+      - name: Syntax check
+        run: |
+          python -m py_compile app.py
+
       - name: Build exe
         run: |
-        
-      
-
           pyinstaller --clean --noconfirm CommissioningBudgetTool.spec
       - name: Upload artifact
         uses: actions/upload-artifact@v4
