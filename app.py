@@ -7,6 +7,7 @@ import numpy as np
 import openpyxl
 
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtCharts import QChart, QChartView, QBarSeries, QBarSet, QBarCategoryAxis, QValueAxis
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
@@ -460,15 +461,33 @@ class MainWindow(QMainWindow):
 
         sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
         sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
-        right_l.addWidget(sec_breakdown)
 
         sec_assign = Section("Personnel Assignments", "Each machine type has dedicated personnel.", "👥")
         sec_assign.content_layout.addWidget(self.tbl_assign)
-        right_l.addWidget(sec_assign)
 
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
-        right_l.addWidget(sec_labor)
+
+        # Workload Distribution chart (technicians)
+        self.chart = QChart()
+        self.chart.legend().hide()
+        self.chart.setTitle("Workload Distribution (Technicians)")
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setMinimumWidth(420)
+        self.chart_view.setMinimumHeight(420)
+
+        sec_chart = Section("Workload Distribution", "Technicians and days onsite", "📊")
+        sec_chart.content_layout.addWidget(self.chart_view)
+
+        row = QHBoxLayout()
+        left_stack = QVBoxLayout()
+        left_stack.setSpacing(12)
+        left_stack.addWidget(sec_breakdown)
+        left_stack.addWidget(sec_assign)
+        left_stack.addWidget(sec_labor)
+        row.addLayout(left_stack, 3)
+        row.addWidget(sec_chart, 2)
+        right_l.addLayout(row)
 
         sec_exp = Section("Estimated Expenses", "", "🧳")
         self.lbl_exp_hdr = QLabel("")
@@ -584,7 +603,7 @@ class MainWindow(QMainWindow):
     def reset_views(self):
         self.card_tech.set_value("0", "0 total days")
         self.card_eng.set_value("0", "0 total days")
-        self.card_window.set_value(f"{self.spin_window.value()}", "")
+        self.card_window.set_value(self.card_window.value_label.text())
         self.card_total.set_value("—", "labor + expenses")
         self.lbl_total_val.setText("—")
         for tbl in [self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp]:
@@ -656,13 +675,15 @@ class MainWindow(QMainWindow):
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-            eng_total = mi.eng_days_per_machine * s.qty
+            eng_install_total = mi.eng_days_per_machine * s.qty
+            eng_total = eng_install_total + (training_days if (s.training_required and mi.eng_days_per_machine > 0) else 0)
 
             single_training = 1 if s.training_required else 0
             if mi.tech_install_days_per_machine + single_training > window:
                 raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
-            if mi.eng_days_per_machine > window and mi.eng_days_per_machine > 0:
-                raise ValueError(f"{s.model}: Engineer days for a single machine ({mi.eng_days_per_machine}) exceeds the Customer Install Window ({window}).")
+            eng_single = mi.eng_days_per_machine + (1 if (s.training_required and mi.eng_days_per_machine > 0) else 0)
+            if eng_single > window and eng_single > 0:
+                raise ValueError(f"{s.model}: Engineer days for a single machine (incl. training = {eng_single}) exceeds the Customer Install Window ({window}).")
 
             tech_headcount = 0
             eng_headcount = 0
@@ -757,7 +778,11 @@ class MainWindow(QMainWindow):
             self.tbl_breakdown.setRowCount(len(rows))
             for r_i, r in enumerate(rows):
                 tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-                eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+                if r["eng_total"] == 0:
+                    eng_disp = "—"
+                else:
+                    eng_train = r["training_days"] if (r.get("training_required") and r["eng_total"] > 0) else 0
+                    eng_disp = f'{r["eng_total"]} (incl. {eng_train} Train)' if (eng_train and r.get("training_required")) else str(r["eng_total"])
                 vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
                         "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
                         "—" if r["eng_headcount"] == 0 else str(r["eng_headcount"])]
@@ -770,6 +795,8 @@ class MainWindow(QMainWindow):
                     self.tbl_breakdown.setItem(r_i, c, it)
 
             assigns: List[Assignment] = meta["assignments"]
+            if hasattr(self, "chart"):
+                self._update_chart(assigns)
             self.tbl_assign.setRowCount(len(assigns))
             for i, a in enumerate(assigns):
                 vals = [a.model, a.role, str(a.person_num), str(a.onsite_days), money(a.cost)]
@@ -810,6 +837,16 @@ class MainWindow(QMainWindow):
             sub_row = len(exp_lines)
             self.tbl_exp.setItem(sub_row, 0, QTableWidgetItem("Expenses Subtotal"))
             self.tbl_exp.setItem(sub_row, 1, QTableWidgetItem("—"))
+            # Make the expenses table tall enough to avoid internal scrolling when possible
+            try:
+                header_h = self.tbl_exp.horizontalHeader().height()
+                row_h = self.tbl_exp.verticalHeader().defaultSectionSize()
+                desired = header_h + row_h * (self.tbl_exp.rowCount() + 1) + 18
+                desired = min(max(desired, 240), 620)
+                self.tbl_exp.setMinimumHeight(desired)
+            except Exception:
+                pass
+
             it = QTableWidgetItem(money(meta["exp_total"]))
             it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
             self.tbl_exp.setItem(sub_row, 2, it)
@@ -820,6 +857,44 @@ class MainWindow(QMainWindow):
             self.reset_views()
             self.alert.setText(str(e))
             self.alert.show()
+
+    def _update_chart(self, assignments: List[Assignment]):
+        # Build a simple bar chart for technician assignments (days onsite)
+        try:
+            tech_assign = [a for a in assignments if a.role == "Technician" and a.onsite_days > 0]
+
+            self.chart.removeAllSeries()
+            for ax in list(self.chart.axes()):
+                self.chart.removeAxis(ax)
+
+            if not tech_assign:
+                self.chart.setTitle("Workload Distribution (Technicians)")
+                return
+
+            series = QBarSeries()
+            barset = QBarSet("Onsite Days")
+            categories = []
+            for a in tech_assign:
+                categories.append(f"{a.model} T{a.person_num}")
+                barset.append(float(a.onsite_days))
+            series.append(barset)
+            self.chart.addSeries(series)
+
+            axis_x = QBarCategoryAxis()
+            axis_x.append(categories)
+            self.chart.addAxis(axis_x, Qt.AlignBottom)
+            series.attachAxis(axis_x)
+
+            axis_y = QValueAxis()
+            axis_y.setTitleText("Days onsite")
+            axis_y.setMin(0)
+            axis_y.setMax(max(a.onsite_days for a in tech_assign) + 1)
+            self.chart.addAxis(axis_y, Qt.AlignLeft)
+            series.attachAxis(axis_y)
+
+            self.chart.setTitle("Workload Distribution (Technicians)")
+        except Exception:
+            return
 
     def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: TDict[str, object]) -> str:
         from datetime import date, timedelta
@@ -833,14 +908,18 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:52px;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:16px; float:right;" />'
             except Exception:
                 logo_html = ""
 
         mr = []
         for r in meta["machine_rows"]:
             tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-            eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+            if r["eng_total"] == 0:
+                    eng_disp = "—"
+                else:
+                    eng_train = r["training_days"] if (r.get("training_required") and r["eng_total"] > 0) else 0
+                    eng_disp = f'{r["eng_total"]} (incl. {eng_train} Train)' if (eng_train and r.get("training_required")) else str(r["eng_total"])
             mr.append(f"""<tr>
                 <td>{r['model']}</td>
                 <td style="text-align:center;">{r['qty']}</td>
