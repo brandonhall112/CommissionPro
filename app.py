@@ -658,13 +658,18 @@ class MainWindow(QMainWindow):
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-            eng_total = mi.eng_days_per_machine * s.qty
+            eng_training_days = training_days if (s.training_required and mi.eng_days_per_machine > 0) else 0
+            eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
 
             single_training = 1 if s.training_required else 0
             if mi.tech_install_days_per_machine + single_training > window:
                 raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
-            if mi.eng_days_per_machine > window and mi.eng_days_per_machine > 0:
-                raise ValueError(f"{s.model}: Engineer days for a single machine ({mi.eng_days_per_machine}) exceeds the Customer Install Window ({window}).")
+            if mi.eng_days_per_machine > 0:
+                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
+                if mi.eng_days_per_machine + single_eng_training > window:
+                    raise ValueError(
+                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
+                    )
 
             tech_headcount = 0
             eng_headcount = 0
@@ -688,6 +693,7 @@ class MainWindow(QMainWindow):
                 "qty": s.qty,
                 "training_days": training_days,
                 "training_required": s.training_required,
+                "eng_training_days": eng_training_days,
                 "tech_total": tech_total,
                 "eng_total": eng_total,
                 "tech_headcount": tech_headcount,
