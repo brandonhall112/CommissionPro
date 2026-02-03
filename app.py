@@ -523,9 +523,9 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self):
         # Pearson-ish palette (navy + orange + neutral)
-        blue = "#0B3D66"   # navy
-        gold = "#F15A22"   # orange accent
-        neutral = "#5E6366"
+        blue = "#4B4F54"   # charcoal gray (logo text)
+        gold = "#F05A28"   # Pearson orange
+        neutral = "#6D6E71"
 
         css = """
         QFrame#header { background: __BLUE__; color: white; border: none; }
@@ -834,7 +834,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:52px;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:34px; float:right;" />'
             except Exception:
                 logo_html = ""
 
@@ -869,19 +869,19 @@ class MainWindow(QMainWindow):
         html = f"""<html><head><meta charset="utf-8" />
         <style>
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }}
-            .title {{ font-size: 18pt; font-weight: 800; color: #0B3D66; margin: 0; }}
-            .subtitle {{ margin: 4px 0 0 0; color: #5E6366; }}
+            .topbar {{ border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
+            .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
+            .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
             .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            h3 {{ color: #0B3D66; margin: 18px 0 8px 0; }}
+            h3 {{ color: #4B4F54; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
-            .muted {{ color: #5E6366; }}
-            .total {{ font-size: 16pt; font-weight: 900; color: #0B3D66; }}
+            .muted {{ color: #6D6E71; }}
+            .total {{ font-size: 16pt; font-weight: 900; color: #4B4F54; }}
         </style></head><body>
             <div class="topbar">
                 <div style="float:right;">{logo_html}</div>
