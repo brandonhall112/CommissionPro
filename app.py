@@ -218,6 +218,7 @@ class MachineLine(QFrame):
         self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cmb_model.addItem("— Select —")
         self.cmb_model.addItems(models)
+        self.cmb_model.setCurrentIndex(-1)
         self.cmb_model.currentIndexChanged.connect(self._changed)
 
         self.spin_qty = QSpinBox()
