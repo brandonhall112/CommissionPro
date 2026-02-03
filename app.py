@@ -39,7 +39,7 @@ def ceil_int(x: float) -> int:
 
 
 def balanced_allocate(total_days: int, headcount: int) -> List[int]:
-    \"\"\"Balance integer days to minimize the maximum assigned days.\"\"\"
+    """Balance integer days to minimize the maximum assigned days."""
     if headcount <= 0:
         return []
     loads = [0] * headcount
@@ -511,7 +511,7 @@ class MainWindow(QMainWindow):
     def apply_theme(self):
         blue = "#0B3D66"
         gold = "#D39A2C"
-        self.setStyleSheet(f\"\"\"
+        self.setStyleSheet(f"""
         QFrame#header {{ background: {blue}; color: white; border: none; }}
         QFrame#panel {{ background: white; border: 1px solid #E6E8EB; border-radius: 14px; }}
         QLabel#panelTitle {{ font-size: 16px; font-weight: 800; color: #0F172A; }}
@@ -561,7 +561,7 @@ class MainWindow(QMainWindow):
             border-radius: 12px;
         }}
         QFrame#machineLine {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 12px; }}
-        \"\"\")
+        """)
 
     def reset_views(self):
         self.card_tech.set_value("0", "0 total days")
@@ -818,22 +818,22 @@ class MainWindow(QMainWindow):
         for r in meta["machine_rows"]:
             tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
             eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
-            mr.append(f\"\"\"<tr>
+            mr.append(f"""<tr>
                 <td>{r['model']}</td>
                 <td style="text-align:center;">{r['qty']}</td>
                 <td>{tech_disp}</td>
                 <td style="text-align:center;">{eng_disp}</td>
                 <td style="text-align:center;">{r['tech_headcount'] if r['tech_headcount'] else "—"}</td>
                 <td style="text-align:center;">{r['eng_headcount'] if r['eng_headcount'] else "—"}</td>
-            </tr>\"\"\")
+            </tr>""")
 
         exp_rows = []
         for l in exp_lines:
-            exp_rows.append(f\"\"\"<tr>
+            exp_rows.append(f"""<tr>
                 <td>{l.description}</td>
                 <td>{l.details}</td>
                 <td style="text-align:right;">{money(l.extended)}</td>
-            </tr>\"\"\")
+            </tr>""")
 
         labor_sub = tech.labor_cost + eng.labor_cost
 
@@ -842,7 +842,7 @@ class MainWindow(QMainWindow):
             li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
             req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
 
-        html = f\"\"\"<html><head><meta charset="utf-8" />
+        html = f"""<html><head><meta charset="utf-8" />
         <style>
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ border-bottom: 2px solid #0B3D66; padding-bottom: 10px; margin-bottom: 14px; }}
@@ -915,7 +915,7 @@ class MainWindow(QMainWindow):
                 <li><b>Travel Days:</b> Expenses include {TRAVEL_DAYS_PER_PERSON} travel days (1 day travel-in + 1 day travel-out) in addition to onsite work days.</li>
             </ul>
             {req_html}
-        </body></html>\"\"\"
+        </body></html>"""
         return html
 
     def print_quote_preview(self):
