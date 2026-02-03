@@ -30,5 +30,5 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    version='build/version_info.txt',
+    version='version_info.txt',
 )
