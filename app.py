@@ -526,55 +526,75 @@ class MainWindow(QMainWindow):
         gold = "#F15A22"   # orange accent
         neutral = "#5E6366"
         self.setStyleSheet(f"""
-        QFrame#header {{ background: {blue}; color: white; border: none; }}
-        QFrame#panel {{ background: white; border: 1px solid #E6E8EB; border-radius: 14px; }}
-        QLabel#panelTitle {{ font-size: 16px; font-weight: 800; color: #0F172A; }}
-        QFrame#softBox {{ background: #FFF7EA; border: 1px solid #F0D8A8; border-radius: 12px; }}
-        QLabel#note {{ color: #334155; font-size: 12px; }}
-        QLabel#emptyHint {{ color: #64748B; background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; }}
-        QPushButton#primary {{
-            background: {gold}; border: 0px; color: #0B1B2A;
+        QFrame#header {{{ {{ background: {{blue }}
+; color: white; border: none; }}
+        QFrame#panel {{{ {{ background: white; border: 1px solid #E6E8EB; border-radius: 14px; }}
+}}
+        QLabel#panelTitle {{{ {{ font-size: 16px; font-weight: 800; color: #0F172A; }}
+}}
+        QFrame#softBox {{{ {{ background: #FFF7EA; border: 1px solid #F0D8A8; border-radius: 12px; }}
+}}
+        QLabel#note {{{ {{ color: #334155; font-size: 12px; }}
+}}
+        QLabel#emptyHint {{{ {{ color: #64748B; background: #F8FAFC; border: 1px dashed #CBD5E1; border-radius: 12px; }}
+}}
+        QPushButton#primary {{{ {{
+            background: {gold}}; border: 0px; color: #0B1B2A;
             padding: 10px 12px; border-radius: 10px; font-weight: 800;
         }}
-        QPushButton {{
+        QPushButton {{{ {{
             padding: 8px 10px; border-radius: 10px;
             border: 1px solid #D6D9DD; background: #F8FAFC;
         }}
-        QPushButton:disabled {{ color: #94A3B8; background: #F1F5F9; }}
-        QFrame#card { background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }
-        QLabel#cardIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 16px; }}
-        QLabel#cardTitle {{ font-size: 12px; color: #5E6366; font-weight: 700; }}
-        QLabel#cardValue {{ font-size: 24px; color: #0F172A; font-weight: 900; }}
-        QLabel#cardSub {{ font-size: 12px; color: #5E6366; }}
-        QFrame#section {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }}
-        QLabel#sectionIcon {{ background: #EEF2F7; border-radius: 10px; font-size: 14px; }}
-        QLabel#sectionTitle {{ font-size: 15px; font-weight: 900; color: #0F172A; }}
-        QLabel#sectionSub {{ font-size: 12px; color: #5E6366; }}
-        QTableWidget#table {{
+        QPushButton:disabled {{{ {{ color: #94A3B8; background: #F1F5F9; }}
+}}
+        QFrame#card {{{ {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }}
+}}
+        QLabel#cardIcon {{{ {{ background: #EEF2F7; border-radius: 10px; font-size: 16px; }}
+}}
+        QLabel#cardTitle {{{ {{ font-size: 12px; color: #5E6366; font-weight: 700; }}
+}}
+        QLabel#cardValue {{{ {{ font-size: 24px; color: #0F172A; font-weight: 900; }}
+}}
+        QLabel#cardSub {{{ {{ font-size: 12px; color: #5E6366; }}
+}}
+        QFrame#section {{{ {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }}
+}}
+        QLabel#sectionIcon {{{ {{ background: #EEF2F7; border-radius: 10px; font-size: 14px; }}
+}}
+        QLabel#sectionTitle {{{ {{ font-size: 15px; font-weight: 900; color: #0F172A; }}
+}}
+        QLabel#sectionSub {{{ {{ font-size: 12px; color: #5E6366; }}
+}}
+        QTableWidget#table {{{ {{
             background: #FFFFFF;
             border: 1px solid #EEF0F2;
             border-radius: 12px;
             gridline-color: #E2E8F0;
             selection-background-color: #DBEAFE;
         }}
-        QHeaderView::section {{
+        QHeaderView::section {{{ {{
             background: #F1F5F9;
             padding: 8px;
             border: 0px;
             border-bottom: 1px solid #E2E8F0;
             font-weight: 800;
         }}
-        QFrame#totalBar {{ background: #F8FAFC; border: 1px solid #E6E8EB; border-radius: 14px; }}
-        QLabel#totalLabel {{ font-size: 13px; font-weight: 800; color: #0F172A; }}
-        QLabel#totalValue {{ font-size: 22px; font-weight: 900; color: #0B3D66; }}
-        QLabel#alert {{
+        QFrame#totalBar {{{ {{ background: #F8FAFC; border: 1px solid #E6E8EB; border-radius: 14px; }}
+}}
+        QLabel#totalLabel {{{ {{ font-size: 13px; font-weight: 800; color: #0F172A; }}
+}}
+        QLabel#totalValue {{{ {{ font-size: 22px; font-weight: 900; color: #0B3D66; }}
+}}
+        QLabel#alert {{{ {{
             background: #FEF2F2;
             border: 1px solid #FCA5A5;
             color: #7F1D1D;
             padding: 10px;
             border-radius: 12px;
         }}
-        QFrame#machineLine {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 12px; }}
+        QFrame#machineLine {{{ {{ background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 12px; }}
+}}
         """)
 
     def reset_views(self):
