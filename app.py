@@ -835,7 +835,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" height="26" style="height:26px;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" height="36" style="height:36px;" />'
             except Exception:
                 logo_html = ""
 
@@ -870,7 +870,7 @@ class MainWindow(QMainWindow):
         html = f"""<html><head><meta charset="utf-8" />
         <style>
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ display:flex; align-items:center; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
+            .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
             .logo {{ text-align:right; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
