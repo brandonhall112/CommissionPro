@@ -526,7 +526,7 @@ class MainWindow(QMainWindow):
         blue = "#4B4F54"   # charcoal gray (logo text)
         gold = "#F05A28"   # Pearson orange
         neutral = "#6D6E71"
-
+        red = "#D6453D"    # Pearson red accent
         css = """
         QFrame#header { background: __BLUE__; color: white; border: none; }
         QFrame#panel { background: white; border: 1px solid #E6E8EB; border-radius: 14px; }
@@ -560,7 +560,8 @@ class MainWindow(QMainWindow):
             selection-background-color: #DBEAFE;
         }
         QHeaderView::section {
-            background: #F1F5F9;
+            background: __RED__;
+            color: white;
             padding: 8px;
             border: 0px;
             border-bottom: 1px solid #E2E8F0;
@@ -579,7 +580,7 @@ class MainWindow(QMainWindow):
         QFrame#machineLine { background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 12px; }
         """
 
-        css = css.replace("__BLUE__", blue).replace("__GOLD__", gold).replace("__NEUTRAL__", neutral)
+        css = css.replace("__BLUE__", blue).replace("__GOLD__", gold).replace("__NEUTRAL__", neutral).replace("__RED__", red)
         self.setStyleSheet(css)
 
     def reset_views(self):
@@ -834,7 +835,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:34px; float:right;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:12px;" />'
             except Exception:
                 logo_html = ""
 
