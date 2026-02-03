@@ -26,14 +26,15 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      # Fail fast if the wrong app.py is being built
+      # Fail fast if the wrong app.py is being built / confirm paths
       - name: Show repo root contents
         shell: pwsh
         run: |
+          Write-Host "---- repo root ----"
           Get-ChildItem -Force
-          Write-Host "`n--- .github/workflows ---"
+          Write-Host "`n---- .github/workflows ----"
           Get-ChildItem -Force .github\workflows
-          Write-Host "`n--- app.py first 60 lines ---"
+          Write-Host "`n---- app.py first 60 lines ----"
           Get-Content app.py -TotalCount 60
 
       - name: Syntax check
@@ -46,8 +47,18 @@ jobs:
         run: |
           pyinstaller --clean --noconfirm CommissioningBudgetTool.spec
 
-      - name: Upload EXE artifact
+      - name: Show dist contents
+        shell: pwsh
+        run: |
+          Write-Host "---- dist ----"
+          if (Test-Path dist) {
+            Get-ChildItem -Recurse -Force dist
+          } else {
+            Write-Host "dist folder not found"
+          }
+
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: CommissioningBudgetTool-Windows
-          path: dist/CommissioningBudgetTool/**
+          path: dist/**
