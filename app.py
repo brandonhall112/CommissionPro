@@ -835,7 +835,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" style="height:12px;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" height="18" style="height:18px;" />'
             except Exception:
                 logo_html = ""
 
