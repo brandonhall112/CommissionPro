@@ -870,7 +870,8 @@ class MainWindow(QMainWindow):
         html = f"""<html><head><meta charset="utf-8" />
         <style>
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar { display:flex; align-items:center; justify-content:space-between; { border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
+            .topbar {{ display:flex; align-items:center; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
+            .logo {{ text-align:right; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
@@ -885,10 +886,11 @@ class MainWindow(QMainWindow):
             .total {{ font-size: 16pt; font-weight: 900; color: #4B4F54; }}
         </style></head><body>
             <div class="topbar">
-                <div style="float:right;">{logo_html}</div>
-                <p class="title">Commissioning Budget Quote</p>
-                <p class="subtitle muted">Service Estimate</p>
-                <div style="clear:both;"></div>
+                <div>
+                    <p class="title">Commissioning Budget Quote</p>
+                    <p class="subtitle muted">Service Estimate</p>
+                </div>
+                <div class="logo">{logo_html}</div>
             </div>
 
             <div class="two">
