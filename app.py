@@ -1097,6 +1097,41 @@ def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[Ex
         event.accept()
 
 
+    # --- Printing (class methods) ---
+    def build_quote_html(self, tech: RoleTotals, eng: RoleTotals, exp_lines: List[ExpenseLine], meta: TDict[str, object]) -> str:
+        # Delegate to the module-level template builder (avoids f-string/CSS brace issues)
+        return build_quote_html(tech, eng, exp_lines, meta)
+
+    def print_quote_preview(self):
+        try:
+            tech, eng, exp_lines, meta = self.calc()
+        except Exception as e:
+            QMessageBox.critical(self, "Cannot print", str(e))
+            return
+
+        try:
+            html = self.build_quote_html(tech, eng, exp_lines, meta)
+            doc = QTextDocument()
+            doc.setHtml(html)
+
+            printer = QPrinter(QPrinter.HighResolution)
+            try:
+                printer.setPageSize(QPageSize(QPageSize.Letter))
+            except Exception:
+                pass
+
+            preview = QPrintPreviewDialog(printer, self)
+            preview.setWindowTitle("Print Preview - Commissioning Budget Quote")
+            preview.setWindowModality(Qt.ApplicationModal)
+            preview.resize(1100, 800)
+            preview.paintRequested.connect(lambda p: doc.print_(p))
+            preview.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Print error", str(e))
+            return
+
+
+
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
