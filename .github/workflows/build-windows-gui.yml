@@ -18,9 +18,7 @@ jobs:
       - name: Build exe
         run: |
         
-        - name: Syntax check
-  run: |
-    python -m py_compile app.py
+      
 
           pyinstaller --clean --noconfirm CommissioningBudgetTool.spec
       - name: Upload artifact
