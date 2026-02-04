@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont
+from PySide6.QtGui import QPageSize, QFont, QPainter
+from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
 import base64
 
 APP_TITLE = "Commissioning Budget Tool"
@@ -462,15 +463,37 @@ class MainWindow(QMainWindow):
 
         sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
         sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
-        right_l.addWidget(sec_breakdown)
 
         sec_assign = Section("Personnel Assignments", "Each machine type has dedicated personnel.", "👥")
         sec_assign.content_layout.addWidget(self.tbl_assign)
-        right_l.addWidget(sec_assign)
 
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
-        right_l.addWidget(sec_labor)
+
+        # Workload bar chart (bonus visual)
+        self.chart = QChart()
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setRenderHint(QPainter.Antialiasing)
+        self.chart_view.setMinimumWidth(320)
+        self.chart_view.setMinimumHeight(380)
+        sec_chart = Section("Workload", "Days onsite per person (T=Tech, E=Engineer).", "📊")
+        sec_chart.content_layout.addWidget(self.chart_view)
+
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+
+        left_stack = QWidget()
+        left_stack_l = QVBoxLayout(left_stack)
+        left_stack_l.setContentsMargins(0, 0, 0, 0)
+        left_stack_l.setSpacing(12)
+        left_stack_l.addWidget(sec_breakdown)
+        left_stack_l.addWidget(sec_assign)
+        left_stack_l.addWidget(sec_labor)
+
+        top_row.addWidget(left_stack, 3)
+        top_row.addWidget(sec_chart, 2)
+
+        right_l.addLayout(top_row)
 
         sec_exp = Section("Estimated Expenses", "", "🧳")
         self.lbl_exp_hdr = QLabel("")
@@ -596,6 +619,12 @@ class MainWindow(QMainWindow):
         self.btn_print.setEnabled(False)
         self.alert.hide()
         self.alert.setText("")
+        if hasattr(self, 'chart'):
+            try:
+                self.chart.removeAllSeries()
+                self.chart.setTitle('Workload (onsite days)')
+            except Exception:
+                pass
 
     def add_line(self):
         if self.empty_hint is not None:
@@ -771,6 +800,53 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+
+    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
+        """Render a simple horizontal bar chart of onsite days by person."""
+        labels: List[str] = []
+        values: List[int] = []
+
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            labels.append(f"T{i}")
+            values.append(int(d))
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            labels.append(f"E{i}")
+            values.append(int(d))
+
+        # Empty state
+        self.chart.removeAllSeries()
+        self.chart.setTitle("Workload (onsite days)")
+        if len(labels) == 0:
+            return
+
+        series = QHorizontalBarSeries()
+        bar = QBarSet("Onsite Days")
+        for v in values:
+            bar.append(float(v))
+        series.append(bar)
+
+        self.chart.addSeries(series)
+
+        axis_y = QBarCategoryAxis()
+        axis_y.append(labels)
+
+        axis_x = QValueAxis()
+        max_v = max(values) if values else 1
+        axis_x.setRange(0, max(1, int(max_v)))
+        axis_x.setLabelFormat("%d")
+        axis_x.setTickCount(min(8, max(2, int(max_v) + 1)))
+
+        # Replace axes
+        for ax in list(self.chart.axes()):
+            self.chart.removeAxis(ax)
+
+        self.chart.addAxis(axis_y, Qt.AlignLeft)
+        self.chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_y)
+        series.attachAxis(axis_x)
+
+        self.chart.legend().hide()
+
     def recalc(self):
         if len(self.lines) == 0:
             self.reset_views()
@@ -783,6 +859,8 @@ class MainWindow(QMainWindow):
             self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
             self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days • +{TRAVEL_DAYS_PER_PERSON} travel days")
             self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
+
+            self.update_workload_chart(tech, eng)
             self.lbl_total_val.setText(money(meta["grand_total"]))
 
             rows = meta["machine_rows"]
