@@ -772,7 +772,7 @@ class MainWindow(QMainWindow):
         return tech, eng, exp_lines, meta
 
 
-    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
+    def _autosize_table_height(self, tbl, visible_rows=None, max_height=620):
         """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
         try:
             tbl.resizeRowsToContents()
