@@ -458,6 +458,7 @@ class MainWindow(QMainWindow):
         self.tbl_assign = self.make_table(["Machine Type", "Role", "Person #", "Assigned Days", "Cost"])
         self.tbl_labor = self.make_table(["Role", "Daily Rate", "Total Days", "Personnel", "Total Cost"])
         self.tbl_exp = self.make_table(["Expense", "Details", "Amount"])
+        self.tbl_exp.setMinimumHeight(260)
 
         sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
         sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
@@ -517,7 +518,7 @@ class MainWindow(QMainWindow):
         tbl.setSelectionMode(QAbstractItemView.SingleSelection)
         tbl.setAlternatingRowColors(True)
         tbl.setObjectName("table")
-        tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        tbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         tbl.setMinimumHeight(120)
         return tbl
 
