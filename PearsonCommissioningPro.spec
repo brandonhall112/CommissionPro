@@ -10,7 +10,7 @@ PROJECT_DIR = os.path.abspath(os.getcwd())
 ASSETS_DIR = os.path.join(PROJECT_DIR, "assets")
 
 APP_NAME = "PearsonCommissioningPro"
-ICON_PATH = os.path.join(ASSETS_DIR, "icon.ico")  # <-- your converted .ico goes here
+ICON_PATH = os.path.join(ASSETS_DIR, "PearsonP.ico")  # converted .ico goes here
 
 # Bundle runtime files
 datas = []
