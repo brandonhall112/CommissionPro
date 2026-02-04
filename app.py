@@ -3,6 +3,63 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
 
+
+def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
+    """Find the default Excel workbook inside assets without prompting the user unless missing."""
+    assets = resolve_assets_dir()
+
+    exact = (assets / expected_name)
+    try:
+        if exact.exists():
+            return exact.resolve()
+    except Exception:
+        pass
+
+    # Fuzzy match (handles minor renames like '(1)' etc.)
+    try:
+        for f in assets.glob("*.xlsx"):
+            n = f.name.lower()
+            if "tech" in n and "quote" in n and "rate" in n:
+                return f.resolve()
+    except Exception:
+        pass
+
+    # If exactly one xlsx exists, use it
+    try:
+        xls = list(assets.glob("*.xlsx"))
+        if len(xls) == 1:
+            return xls[0].resolve()
+    except Exception:
+        pass
+
+    return None
+
+
+
+def resolve_assets_dir() -> Path:
+    """Return the assets directory for dev + PyInstaller (onefile/onedir).
+
+    onefile: extracted to sys._MEIPASS/assets
+    onedir: typically <exe_dir>/_internal/assets (new PyInstaller layout) or <exe_dir>/assets
+    dev:   <repo>/assets
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return (Path(meipass).resolve() / "assets").resolve()
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for p in (exe_dir / "_internal" / "assets", exe_dir / "assets"):
+            try:
+                if p.exists():
+                    return p.resolve()
+            except Exception:
+                pass
+        return (exe_dir / "_internal" / "assets").resolve()
+
+    return (Path(__file__).resolve().parent / "assets").resolve()
+
+
 import numpy as np
 import openpyxl
 
@@ -32,60 +89,9 @@ TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
 OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
-
-def resolve_assets_dir() -> Path:
-    """Return the assets directory for dev + PyInstaller onefile."""
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)).resolve()
-    # Most builds bundle assets/ under base
-    return (base / "assets").resolve()
-
-def resolve_logo_path() -> Path:
-    assets = resolve_assets_dir()
-    p = assets / "Pearson Logo.png"
-    if p.exists():
-        return p
-    # fallback: alongside script/exe
-    base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-    alt = base_dir / "assets" / "Pearson Logo.png"
-    return alt if alt.exists() else p
-
-def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
-    """Return the default Excel path inside assets/.
-    If the exact filename isn't present, try to find a close match in assets/.
-    """
-    assets = resolve_assets_dir()
-    exact = (assets / expected_name).resolve()
-    if exact.exists():
-        return exact
-
-    # Try a fuzzy match in assets (handles minor renames like "(1)" etc.)
-    try:
-        for f in assets.glob("*.xlsx"):
-            n = f.name.lower()
-            if "tech" in n and "quote" in n and "rate" in n:
-                return f.resolve()
-    except Exception:
-        pass
-
-    # If there is exactly one .xlsx in assets, use it
-    try:
-        xls = list(assets.glob("*.xlsx"))
-        if len(xls) == 1:
-            return xls[0].resolve()
-    except Exception:
-        pass
-
-    return None
-
-
-# Initialize runtime paths
-ASSETS_DIR = resolve_assets_dir()
-DEFAULT_EXCEL = resolve_excel_path()
-LOGO_PATH = resolve_logo_path()
-
-ASSETS_DIR = None  # resolved at runtime
-DEFAULT_EXCEL = None  # resolved at runtime
-LOGO_PATH = None  # resolved at runtime
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
+LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
 
 
 def ceil_int(x: float) -> int:
@@ -154,7 +160,7 @@ class ExcelData:
         self._load()
 
     def _load(self):
-        wb = openpyxl.load_workbook(str(self.path), data_only=True)
+        wb = openpyxl.load_workbook(self.path, data_only=True)
 
         # Models: Instal days by Model
         if "Instal days by Model" not in wb.sheetnames:
@@ -391,21 +397,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.resize(1920, 1200)
 
-        excel_path = DEFAULT_EXCEL
-        if excel_path is None or not Path(excel_path).exists():
-            picked, _ = QFileDialog.getOpenFileName(
-                self,
-                "Select Tech Days & Quote Rates Excel File",
-                str(Path.home()),
-                "Excel Files (*.xlsx)"
-            )
-            if not picked:
-                QMessageBox.critical(self, "Missing Excel File", "Could not find the required Excel file in the packaged assets folder. Please select it to continue.")
-                raise SystemExit(1)
-            excel_path = Path(picked)
-        else:
-            excel_path = Path(excel_path)
-        self.data = ExcelData(excel_path)
+        self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
         self.lines: List[MachineLine] = []
 
@@ -1142,6 +1134,7 @@ class MainWindow(QMainWindow):
                     <b>ESTIMATED DURATION</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
                 </div>
             </div>
+            <div class="section-spacer"></div>
 
             <h3>Machine Breakdown</h3>
             <table class="grid">
