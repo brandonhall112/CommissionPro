@@ -32,9 +32,102 @@ TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
 OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
-LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
+
+def resolve_assets_dir() -> Path:
+    """Return the assets directory for dev + PyInstaller onefile."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent)).resolve()
+    # Most builds bundle assets/ under base
+    return (base / "assets").resolve()
+
+def resolve_logo_path() -> Path:
+    assets = resolve_assets_dir()
+    p = assets / "Pearson Logo.png"
+    if p.exists():
+        return p
+    # fallback: alongside script/exe
+    base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+    alt = base_dir / "assets" / "Pearson Logo.png"
+    return alt if alt.exists() else p
+
+def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
+    """Find the Excel file in common locations. If not found, try a fuzzy match."""
+    candidates: list[Path] = []
+
+    # 1) bundled assets
+    try:
+        assets = resolve_assets_dir()
+        candidates += [assets / expected_name]
+    except Exception:
+        pass
+
+    # 2) executable folder (installed) / script folder (dev)
+    try:
+        base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        candidates += [
+            base_dir / expected_name,
+            base_dir / "assets" / expected_name,
+        ]
+    except Exception:
+        pass
+
+    # 3) repo root/current working dir
+    try:
+        cwd = Path.cwd()
+        candidates += [cwd / expected_name, cwd / "assets" / expected_name]
+    except Exception:
+        pass
+
+    for p in candidates:
+        try:
+            if p and p.exists():
+                return p
+        except Exception:
+            continue
+
+    # Fuzzy match (handles renamed files like "Tech days and quote rates (1).xlsx")
+    search_dirs = []
+    for p in candidates:
+        if p:
+            search_dirs.append(p.parent)
+    # also search base_dir and assets
+    try:
+        search_dirs.append(resolve_assets_dir())
+    except Exception:
+        pass
+    try:
+        base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+        search_dirs += [base_dir, base_dir / "assets"]
+    except Exception:
+        pass
+
+    seen = set()
+    for d in search_dirs:
+        try:
+            d = d.resolve()
+        except Exception:
+            continue
+        if str(d) in seen:
+            continue
+        seen.add(str(d))
+        try:
+            for f in d.glob("*.xlsx"):
+                name = f.name.lower()
+                if "tech days" in name and "quote rates" in name:
+                    return f
+        except Exception:
+            continue
+
+    return None
+
+
+# Initialize runtime paths
+ASSETS_DIR = resolve_assets_dir()
+DEFAULT_EXCEL = resolve_excel_path()
+LOGO_PATH = resolve_logo_path()
+
+ASSETS_DIR = None  # resolved at runtime
+DEFAULT_EXCEL = None  # resolved at runtime
+LOGO_PATH = None  # resolved at runtime
 
 
 def ceil_int(x: float) -> int:
@@ -103,7 +196,7 @@ class ExcelData:
         self._load()
 
     def _load(self):
-        wb = openpyxl.load_workbook(self.path, data_only=True)
+        wb = openpyxl.load_workbook(str(self.path), data_only=True)
 
         # Models: Instal days by Model
         if "Instal days by Model" not in wb.sheetnames:
@@ -340,7 +433,20 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.resize(1920, 1200)
 
-        self.data = ExcelData(DEFAULT_EXCEL)
+        excel_path = DEFAULT_EXCEL
+        if excel_path is None or (hasattr(excel_path, "exists") and not excel_path.exists()):
+            # Prompt user to select the Excel file (this also handles renamed files)
+            picked, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select Tech Days & Quote Rates Excel File",
+                str(Path.home()),
+                "Excel Files (*.xlsx)"
+            )
+            if not picked:
+                QMessageBox.critical(self, "Missing Excel File", "Could not find the required Excel file. Please select it to continue.")
+                raise SystemExit(1)
+            excel_path = Path(picked)
+        self.data = ExcelData(excel_path)
         self.models_sorted = sorted(self.data.models.keys())
         self.lines: List[MachineLine] = []
 
