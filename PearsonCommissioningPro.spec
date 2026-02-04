@@ -5,22 +5,19 @@ from PyInstaller.building.build_main import Analysis, PYZ, EXE, COLLECT
 
 block_cipher = None
 
-# Avoid using __file__ in spec files (can be undefined in some runners)
 PROJECT_DIR = os.path.abspath(os.getcwd())
 ASSETS_DIR = os.path.join(PROJECT_DIR, "assets")
 
 APP_NAME = "PearsonCommissioningPro"
-ICON_PATH = os.path.join(ASSETS_DIR, "PearsonP.ico")  # converted .ico goes here
+ICON_PATH = os.path.join(ASSETS_DIR, "icon.ico")
 
-# Bundle runtime files
 datas = []
 
-# Excel input file (the app can load it from the packaged folder)
+# Put Excel under assets/ so default lookup succeeds in PyInstaller onefile mode
 excel_path = os.path.join(PROJECT_DIR, "Tech days and quote rates.xlsx")
 if os.path.exists(excel_path):
-    datas.append((excel_path, "."))
+    datas.append((excel_path, "assets"))
 
-# Logo used in printable quote header (if your app references it)
 logo_path = os.path.join(ASSETS_DIR, "Pearson Logo.png")
 if os.path.exists(logo_path):
     datas.append((logo_path, "assets"))
@@ -30,10 +27,7 @@ a = Analysis(
     pathex=[PROJECT_DIR],
     binaries=[],
     datas=datas,
-    hiddenimports=[
-        "PySide6.QtSvg",
-        "PySide6.QtXml",
-    ],
+    hiddenimports=["PySide6.QtSvg", "PySide6.QtXml"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -59,9 +53,9 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,                   # GUI
+    console=False,
     disable_windowed_traceback=False,
-    icon=ICON_PATH,                  # <-- EXE icon
+    icon=ICON_PATH,
 )
 
 coll = COLLECT(
