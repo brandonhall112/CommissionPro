@@ -765,7 +765,10 @@ class MainWindow(QMainWindow):
             self.tbl_breakdown.setRowCount(len(rows))
             for r_i, r in enumerate(rows):
                 tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-                eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+                eng_disp = "—" if r["eng_total"] == 0 else (
+                    f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
+                    else str(r['eng_total'])
+                )
                 vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
                         "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
                         "—" if r["eng_headcount"] == 0 else str(r["eng_headcount"])]
@@ -848,7 +851,10 @@ class MainWindow(QMainWindow):
         mr = []
         for r in meta["machine_rows"]:
             tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-            eng_disp = "—" if r["eng_total"] == 0 else str(r["eng_total"])
+            eng_disp = "—" if r["eng_total"] == 0 else (
+                    f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
+                    else str(r['eng_total'])
+                )
             mr.append(f"""<tr>
                 <td>{r['model']}</td>
                 <td style="text-align:center;">{r['qty']}</td>
