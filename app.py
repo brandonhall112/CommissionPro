@@ -655,7 +655,8 @@ class MainWindow(QMainWindow):
 
         for s in selections:
             mi = self.data.models[s.model]
-            training_days = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if s.training_required else 0
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if getattr(mi, 'train_per_machine', 0) > 0 else 0
+            training_days = base_training if s.training_required else 0
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
