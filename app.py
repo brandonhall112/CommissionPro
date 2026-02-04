@@ -758,7 +758,7 @@ class MainWindow(QMainWindow):
 
             self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total days")
             self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
-            self.card_window.set_value(f"{meta['window']}", f"{meta['max_onsite']} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days")
+            self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days • +{TRAVEL_DAYS_PER_PERSON} travel days")
             self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
             self.lbl_total_val.setText(money(meta["grand_total"]))
 
