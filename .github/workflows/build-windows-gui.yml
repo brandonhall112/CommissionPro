@@ -1,4 +1,4 @@
-name: Build Windows GUI EX
+name: Build Windows GUI EXE
 
 on:
   workflow_dispatch:
