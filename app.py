@@ -458,7 +458,7 @@ class MainWindow(QMainWindow):
         self.tbl_assign = self.make_table(["Machine Type", "Role", "Person #", "Assigned Days", "Cost"])
         self.tbl_labor = self.make_table(["Role", "Daily Rate", "Total Days", "Personnel", "Total Cost"])
         self.tbl_exp = self.make_table(["Expense", "Details", "Amount"])
-        self.tbl_exp.setMinimumHeight(260)
+        self.tbl_exp.setMinimumHeight(520)
 
         sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
         sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
@@ -659,7 +659,8 @@ class MainWindow(QMainWindow):
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-            eng_training_days = training_days if (s.training_required and mi.eng_days_per_machine > 0) else 0
+            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
+            eng_training_days = eng_training_potential if s.training_required else 0
             eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
 
             single_training = 1 if s.training_required else 0
@@ -693,8 +694,10 @@ class MainWindow(QMainWindow):
                 "model": s.model,
                 "qty": s.qty,
                 "training_days": training_days,
+                "training_potential": base_training,
                 "training_required": s.training_required,
                 "eng_training_days": eng_training_days,
+                "eng_training_potential": eng_training_potential,
                 "tech_total": tech_total,
                 "eng_total": eng_total,
                 "tech_headcount": tech_headcount,
@@ -748,6 +751,23 @@ class MainWindow(QMainWindow):
         }
         return tech, eng, exp_lines, meta
 
+
+    def _autosize_table_height(self, tbl, max_height=520):
+        """Resize table height to fit contents to avoid inner scrolling."""
+        try:
+            tbl.resizeRowsToContents()
+            header_h = tbl.horizontalHeader().height()
+            frame = tbl.frameWidth() * 2
+            total = header_h + frame
+            for r in range(tbl.rowCount()):
+                total += tbl.rowHeight(r)
+            # add a little padding
+            total += 12
+            tbl.setMinimumHeight(min(total, max_height))
+            tbl.setMaximumHeight(min(total, max_height))
+        except Exception:
+            pass
+
     def recalc(self):
         if len(self.lines) == 0:
             self.reset_views()
@@ -768,7 +788,7 @@ class MainWindow(QMainWindow):
                 tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
                 eng_disp = "—" if r["eng_total"] == 0 else (
                     f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_days', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
+                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_potential', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
                 )
                 vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
                         "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
@@ -854,7 +874,7 @@ class MainWindow(QMainWindow):
             tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
             eng_disp = "—" if r["eng_total"] == 0 else (
                     f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_days', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
+                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_potential', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
                 )
             mr.append(f"""<tr>
                 <td>{r['model']}</td>
