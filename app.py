@@ -767,7 +767,7 @@ class MainWindow(QMainWindow):
                 tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
                 eng_disp = "—" if r["eng_total"] == 0 else (
                     f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else str(r['eng_total'])
+                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_days', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
                 )
                 vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
                         "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
@@ -853,7 +853,7 @@ class MainWindow(QMainWindow):
             tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
             eng_disp = "—" if r["eng_total"] == 0 else (
                     f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else str(r['eng_total'])
+                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_days', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
                 )
             mr.append(f"""<tr>
                 <td>{r['model']}</td>
