@@ -49,10 +49,33 @@ def resolve_logo_path() -> Path:
     alt = base_dir / "assets" / "Pearson Logo.png"
     return alt if alt.exists() else p
 
-def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path:
-    """Return the default Excel path inside assets/. Prompt only if missing."""
+def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
+    """Return the default Excel path inside assets/.
+    If the exact filename isn't present, try to find a close match in assets/.
+    """
     assets = resolve_assets_dir()
-    return (assets / expected_name).resolve()
+    exact = (assets / expected_name).resolve()
+    if exact.exists():
+        return exact
+
+    # Try a fuzzy match in assets (handles minor renames like "(1)" etc.)
+    try:
+        for f in assets.glob("*.xlsx"):
+            n = f.name.lower()
+            if "tech" in n and "quote" in n and "rate" in n:
+                return f.resolve()
+    except Exception:
+        pass
+
+    # If there is exactly one .xlsx in assets, use it
+    try:
+        xls = list(assets.glob("*.xlsx"))
+        if len(xls) == 1:
+            return xls[0].resolve()
+    except Exception:
+        pass
+
+    return None
 
 
 # Initialize runtime paths
