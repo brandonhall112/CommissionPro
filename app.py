@@ -49,75 +49,10 @@ def resolve_logo_path() -> Path:
     alt = base_dir / "assets" / "Pearson Logo.png"
     return alt if alt.exists() else p
 
-def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
-    """Find the Excel file in common locations. If not found, try a fuzzy match."""
-    candidates: list[Path] = []
-
-    # 1) bundled assets
-    try:
-        assets = resolve_assets_dir()
-        candidates += [assets / expected_name]
-    except Exception:
-        pass
-
-    # 2) executable folder (installed) / script folder (dev)
-    try:
-        base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-        candidates += [
-            base_dir / expected_name,
-            base_dir / "assets" / expected_name,
-        ]
-    except Exception:
-        pass
-
-    # 3) repo root/current working dir
-    try:
-        cwd = Path.cwd()
-        candidates += [cwd / expected_name, cwd / "assets" / expected_name]
-    except Exception:
-        pass
-
-    for p in candidates:
-        try:
-            if p and p.exists():
-                return p
-        except Exception:
-            continue
-
-    # Fuzzy match (handles renamed files like "Tech days and quote rates (1).xlsx")
-    search_dirs = []
-    for p in candidates:
-        if p:
-            search_dirs.append(p.parent)
-    # also search base_dir and assets
-    try:
-        search_dirs.append(resolve_assets_dir())
-    except Exception:
-        pass
-    try:
-        base_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-        search_dirs += [base_dir, base_dir / "assets"]
-    except Exception:
-        pass
-
-    seen = set()
-    for d in search_dirs:
-        try:
-            d = d.resolve()
-        except Exception:
-            continue
-        if str(d) in seen:
-            continue
-        seen.add(str(d))
-        try:
-            for f in d.glob("*.xlsx"):
-                name = f.name.lower()
-                if "tech days" in name and "quote rates" in name:
-                    return f
-        except Exception:
-            continue
-
-    return None
+def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path:
+    """Return the default Excel path inside assets/. Prompt only if missing."""
+    assets = resolve_assets_dir()
+    return (assets / expected_name).resolve()
 
 
 # Initialize runtime paths
@@ -434,8 +369,7 @@ class MainWindow(QMainWindow):
         self.resize(1920, 1200)
 
         excel_path = DEFAULT_EXCEL
-        if excel_path is None or (hasattr(excel_path, "exists") and not excel_path.exists()):
-            # Prompt user to select the Excel file (this also handles renamed files)
+        if excel_path is None or not Path(excel_path).exists():
             picked, _ = QFileDialog.getOpenFileName(
                 self,
                 "Select Tech Days & Quote Rates Excel File",
@@ -443,9 +377,11 @@ class MainWindow(QMainWindow):
                 "Excel Files (*.xlsx)"
             )
             if not picked:
-                QMessageBox.critical(self, "Missing Excel File", "Could not find the required Excel file. Please select it to continue.")
+                QMessageBox.critical(self, "Missing Excel File", "Could not find the required Excel file in the packaged assets folder. Please select it to continue.")
                 raise SystemExit(1)
             excel_path = Path(picked)
+        else:
+            excel_path = Path(excel_path)
         self.data = ExcelData(excel_path)
         self.models_sorted = sorted(self.data.models.keys())
         self.lines: List[MachineLine] = []
