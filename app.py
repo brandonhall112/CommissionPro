@@ -1077,6 +1077,7 @@ class MainWindow(QMainWindow):
                     <b>ESTIMATED DURATION</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
                 </div>
             </div>
+            <div class="section-spacer"></div>
 
             <h3>Machine Breakdown</h3>
             <table class="grid">
