@@ -19,7 +19,7 @@ from PySide6.QtGui import QPageSize, QFont, QPainter, QColor
 from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QHorizontalStackedBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
 import base64
 
-APP_TITLE = "Commissioning Budget Tool"
+APP_TITLE = "Pearson Commissioning Pro"
 
 # Business rules
 TRAINING_MACHINES_PER_DAY = 3  # 1 training day per 3 machines (ceil)
@@ -354,7 +354,9 @@ class MainWindow(QMainWindow):
         header.setObjectName("header")
         h = QHBoxLayout(header)
         h.setContentsMargins(14, 10, 14, 10)
-        h.addWidget(QLabel("🧾  " + APP_TITLE))
+        self.lbl_title = QLabel("🧾  " + APP_TITLE)
+        self.lbl_title.setObjectName("appTitle")
+        h.addWidget(self.lbl_title)
         h.addStretch(1)
         btn_excel = QPushButton("Open Excel…")
         btn_excel.clicked.connect(self.open_excel)
@@ -543,6 +545,7 @@ class MainWindow(QMainWindow):
         red = "#D6453D"    # Pearson red accent
         css = """
         QFrame#header { background: __BLUE__; color: white; border: none; }
+        QLabel#appTitle { color: white; font-size: 20px; font-weight: 800; }
         QFrame#panel { background: white; border: 1px solid #E6E8EB; border-radius: 14px; }
         QLabel#panelTitle { font-size: 16px; font-weight: 800; color: #0F172A; }
         QFrame#softBox { background: #FFF7EA; border: 1px solid #F0D8A8; border-radius: 12px; }
@@ -772,7 +775,7 @@ class MainWindow(QMainWindow):
         return tech, eng, exp_lines, meta
 
 
-    def _autosize_table_height(self, tbl, visible_rows=None, max_height=620):
+    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
         """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
         try:
             tbl.resizeRowsToContents()
@@ -903,7 +906,7 @@ class MainWindow(QMainWindow):
 
             self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total days")
             self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
-            self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days • +{TRAVEL_DAYS_PER_PERSON} travel days")
+            self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days")
             self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
 
             self.update_workload_chart(tech, eng)
