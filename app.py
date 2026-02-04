@@ -15,8 +15,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QPainter
-from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
+from PySide6.QtGui import QPageSize, QFont, QPainter, QColor
+from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QHorizontalStackedBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
 import base64
 
 APP_TITLE = "Commissioning Budget Tool"
@@ -474,7 +474,7 @@ class MainWindow(QMainWindow):
         self.chart = QChart()
         self.chart_view = QChartView(self.chart)
         self.chart_view.setRenderHint(QPainter.Antialiasing)
-        self.chart_view.setMinimumHeight(260)
+        self.chart_view.setMinimumHeight(300)
         sec_chart = Section("Workload", "Days onsite per person (T=Tech, E=Engineer).", "📊")
         sec_chart.content_layout.addWidget(self.chart_view)
 
@@ -791,42 +791,89 @@ class MainWindow(QMainWindow):
             pass
 
 
+    
+    
     def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-        """Render a simple horizontal bar chart of onsite days by person."""
+        """Polished horizontal stacked bar chart of onsite + travel days by person."""
         labels: List[str] = []
-        values: List[int] = []
+        tech_vals: List[int] = []
+        eng_vals: List[int] = []
 
-        for i, d in enumerate(tech.onsite_days_by_person, start=1):
-            labels.append(f"T{i}")
-            values.append(int(d))
-        for i, d in enumerate(eng.onsite_days_by_person, start=1):
-            labels.append(f"E{i}")
-            values.append(int(d))
+        for d in tech.onsite_days_by_person:
+            labels.append(f"T{len(tech_vals)+1}")
+            tech_vals.append(int(d))
 
-        # Empty state
+        for d in eng.onsite_days_by_person:
+            labels.append(f"E{len(eng_vals)+1}")
+            eng_vals.append(int(d))
+
         self.chart.removeAllSeries()
-        self.chart.setTitle("Workload (onsite days)")
+        self.chart.setTitle("Workload (days)")
+        self.chart.setBackgroundRoundness(8)
+        self.chart.setAnimationOptions(QChart.SeriesAnimations)
+
         if len(labels) == 0:
             return
 
-        series = QHorizontalBarSeries()
-        bar = QBarSet("Onsite Days")
-        for v in values:
-            bar.append(float(v))
-        series.append(bar)
+        # Colors (match UI theme)
+        tech_color = QColor("#C8102E")  # Pearson red
+        eng_color = QColor("#3A3A3A")   # charcoal gray
+        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
+        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+
+        series = QHorizontalStackedBarSeries()
+
+        set_tech_on = QBarSet("Tech")
+        set_tech_tr = QBarSet("Tech travel")
+        set_eng_on = QBarSet("Eng")
+        set_eng_tr = QBarSet("Eng travel")
+
+        set_tech_on.setColor(tech_color)
+        set_tech_tr.setColor(tech_travel)
+        set_eng_on.setColor(eng_color)
+        set_eng_tr.setColor(eng_travel)
+
+        n = len(labels)
+        # Build arrays aligned to labels: first tech people then engineer people
+        for i in range(n):
+            is_tech = labels[i].startswith("T")
+            if is_tech:
+                v = tech_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(float(v))
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_eng_on.append(0.0)
+                set_eng_tr.append(0.0)
+            else:
+                v = eng_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(0.0)
+                set_tech_tr.append(0.0)
+                set_eng_on.append(float(v))
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+
+        series.append(set_tech_on)
+        series.append(set_tech_tr)
+        series.append(set_eng_on)
+        series.append(set_eng_tr)
 
         self.chart.addSeries(series)
 
         axis_y = QBarCategoryAxis()
         axis_y.append(labels)
 
+        totals = []
+        for i in range(n):
+            if labels[i].startswith("T"):
+                v = tech_vals[int(labels[i][1:]) - 1]
+            else:
+                v = eng_vals[int(labels[i][1:]) - 1]
+            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
+        max_v = max(totals) if totals else 1
+
         axis_x = QValueAxis()
-        max_v = max(values) if values else 1
         axis_x.setRange(0, max(1, int(max_v)))
         axis_x.setLabelFormat("%d")
-        axis_x.setTickCount(min(8, max(2, int(max_v) + 1)))
+        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
 
-        # Replace axes
         for ax in list(self.chart.axes()):
             self.chart.removeAxis(ax)
 
@@ -835,7 +882,16 @@ class MainWindow(QMainWindow):
         series.attachAxis(axis_y)
         series.attachAxis(axis_x)
 
-        self.chart.legend().hide()
+        # Labels/legend polish
+        try:
+            series.setLabelsVisible(True)
+            series.setLabelsPosition(series.LabelsInsideEnd)
+            series.setLabelsFormat("@value")
+        except Exception:
+            pass
+
+        self.chart.legend().setVisible(True)
+        self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
         if len(self.lines) == 0:
