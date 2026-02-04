@@ -2,7 +2,6 @@
 
 import os
 from PyInstaller.building.build_main import Analysis, PYZ, EXE
-from PyInstaller.building.datastruct import Tree
 
 block_cipher = None
 
@@ -12,11 +11,15 @@ ASSETS_DIR = os.path.join(PROJECT_DIR, "assets")
 APP_NAME = "PearsonCommissioningPro"
 ICON_PATH = os.path.join(ASSETS_DIR, "PearsonP.ico")
 
-# Bundle the entire assets folder reliably (Excel, logo, icon, etc.)
-
+# Build datas as a list of (src, dest_folder) 2-tuples (what Analysis expects)
 datas = []
 if os.path.isdir(ASSETS_DIR):
-    datas += Tree(ASSETS_DIR, prefix="assets")
+    for root, dirs, files in os.walk(ASSETS_DIR):
+        for fn in files:
+            src = os.path.join(root, fn)
+            rel = os.path.relpath(root, ASSETS_DIR)  # subfolder under assets
+            dest = os.path.join("assets", rel) if rel != "." else "assets"
+            datas.append((src, dest))
 
 a = Analysis(
     ["app.py"],
@@ -36,6 +39,7 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# Only apply icon if present (prevents CI failure)
 icon_arg = ICON_PATH if os.path.exists(ICON_PATH) else None
 
 exe = EXE(
