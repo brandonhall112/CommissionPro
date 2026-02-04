@@ -474,26 +474,16 @@ class MainWindow(QMainWindow):
         self.chart = QChart()
         self.chart_view = QChartView(self.chart)
         self.chart_view.setRenderHint(QPainter.Antialiasing)
-        self.chart_view.setMinimumWidth(320)
-        self.chart_view.setMinimumHeight(380)
+        self.chart_view.setMinimumHeight(260)
         sec_chart = Section("Workload", "Days onsite per person (T=Tech, E=Engineer).", "📊")
         sec_chart.content_layout.addWidget(self.chart_view)
 
-        top_row = QHBoxLayout()
-        top_row.setSpacing(12)
+        # Left side: put chart under Machine Configuration so the right-side widgets stay readable
+        left_l.addWidget(sec_chart)
 
-        left_stack = QWidget()
-        left_stack_l = QVBoxLayout(left_stack)
-        left_stack_l.setContentsMargins(0, 0, 0, 0)
-        left_stack_l.setSpacing(12)
-        left_stack_l.addWidget(sec_breakdown)
-        left_stack_l.addWidget(sec_assign)
-        left_stack_l.addWidget(sec_labor)
-
-        top_row.addWidget(left_stack, 3)
-        top_row.addWidget(sec_chart, 2)
-
-        right_l.addLayout(top_row)
+        right_l.addWidget(sec_breakdown)
+        right_l.addWidget(sec_assign)
+        right_l.addWidget(sec_labor)
 
         sec_exp = Section("Estimated Expenses", "", "🧳")
         self.lbl_exp_hdr = QLabel("")
