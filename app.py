@@ -458,7 +458,7 @@ class MainWindow(QMainWindow):
         self.tbl_assign = self.make_table(["Machine Type", "Role", "Person #", "Assigned Days", "Cost"])
         self.tbl_labor = self.make_table(["Role", "Daily Rate", "Total Days", "Personnel", "Total Cost"])
         self.tbl_exp = self.make_table(["Expense", "Details", "Amount"])
-        self.tbl_exp.setMinimumHeight(520)
+        self.tbl_exp.setMinimumHeight(0)
 
         sec_breakdown = Section("Machine Breakdown", "Days and personnel required per machine model", "🧩")
         sec_breakdown.content_layout.addWidget(self.tbl_breakdown)
@@ -655,7 +655,7 @@ class MainWindow(QMainWindow):
 
         for s in selections:
             mi = self.data.models[s.model]
-            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if getattr(mi, 'train_per_machine', 0) > 0 else 0
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY)
             training_days = base_training if s.training_required else 0
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
@@ -753,19 +753,21 @@ class MainWindow(QMainWindow):
         return tech, eng, exp_lines, meta
 
 
-    def _autosize_table_height(self, tbl, max_height=520):
-        """Resize table height to fit contents to avoid inner scrolling."""
+    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
+        """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
         try:
             tbl.resizeRowsToContents()
             header_h = tbl.horizontalHeader().height()
             frame = tbl.frameWidth() * 2
-            total = header_h + frame
-            for r in range(tbl.rowCount()):
+            total = header_h + frame + 12
+            n = tbl.rowCount()
+            if visible_rows is not None:
+                n = min(n, int(visible_rows))
+            for r in range(n):
                 total += tbl.rowHeight(r)
-            # add a little padding
-            total += 12
-            tbl.setMinimumHeight(min(total, max_height))
-            tbl.setMaximumHeight(min(total, max_height))
+            total = min(total, max_height)
+            tbl.setMinimumHeight(total)
+            tbl.setMaximumHeight(total)
         except Exception:
             pass
 
@@ -814,7 +816,7 @@ class MainWindow(QMainWindow):
                         it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.tbl_assign.setItem(i, c, it)
 
-            self.tbl_labor.setRowCount(2)
+            self.tbl_labor.setRowCount(3)
             labor_rows = [
                 ("Technician", money(tech.day_rate) + "/day", str(tech.total_onsite_days), str(tech.headcount), money(tech.labor_cost)),
                 ("Engineer", money(eng.day_rate) + "/day", str(eng.total_onsite_days), str(eng.headcount), money(eng.labor_cost)),
@@ -827,6 +829,17 @@ class MainWindow(QMainWindow):
                     if c == 4:
                         it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.tbl_labor.setItem(r_i, c, it)
+
+
+            # Subtotal row
+            labor_subtotal = tech.labor_cost + eng.labor_cost
+            self.tbl_labor.setItem(2, 0, QTableWidgetItem("Subtotal"))
+            self.tbl_labor.setItem(2, 1, QTableWidgetItem(""))
+            self.tbl_labor.setItem(2, 2, QTableWidgetItem(""))
+            self.tbl_labor.setItem(2, 3, QTableWidgetItem(""))
+            it = QTableWidgetItem(money(labor_subtotal))
+            it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.tbl_labor.setItem(2, 4, it)
 
             self.lbl_exp_hdr.setText(
                 f"Expenses are calculated using person-days, including {TRAVEL_DAYS_PER_PERSON} travel days per person."
