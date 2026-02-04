@@ -9,19 +9,12 @@ PROJECT_DIR = os.path.abspath(os.getcwd())
 ASSETS_DIR = os.path.join(PROJECT_DIR, "assets")
 
 APP_NAME = "PearsonCommissioningPro"
-ICON_PATH = os.path.join(ASSETS_DIR, "PearsonP.ico")  # or icon.ico if you rename it back
+ICON_PATH = os.path.join(ASSETS_DIR, "PearsonP.ico")  # expected icon name
 
+# Bundle EVERYTHING inside assets/ so the Excel is guaranteed to be included.
 datas = []
-
-# Excel is stored under assets/ in your repo
-excel_path = os.path.join(ASSETS_DIR, "Tech days and quote rates.xlsx")
-if os.path.exists(excel_path):
-    datas.append((excel_path, "assets"))
-
-# Printable quote logo
-logo_path = os.path.join(ASSETS_DIR, "Pearson Logo.png")
-if os.path.exists(logo_path):
-    datas.append((logo_path, "assets"))
+if os.path.isdir(ASSETS_DIR):
+    datas.append((ASSETS_DIR, "assets"))
 
 a = Analysis(
     ["app.py"],
@@ -41,7 +34,7 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-# only apply icon if present
+# Only apply icon if present (prevents CI failure)
 icon_arg = ICON_PATH if os.path.exists(ICON_PATH) else None
 
 exe = EXE(
