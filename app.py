@@ -1,4 +1,6 @@
 import sys, math
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
