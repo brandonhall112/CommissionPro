@@ -525,8 +525,9 @@ class MainWindow(QMainWindow):
         h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setChildrenCollapsible(False)
+        self.splitter = QSplitter(Qt.Horizontal)
+        splitter = self.splitter
+        splitter.setChildrenCollapsible(True)
         root.addWidget(splitter, 1)
 
         # LEFT
@@ -1372,9 +1373,29 @@ class MainWindow(QMainWindow):
         f.setPointSizeF(pt)
         self.setFont(f)
 
+    
+    def _apply_responsive_layout(self):
+        """Responsive layout: stack panels on narrow windows to avoid horizontal scrolling."""
+        if not hasattr(self, "splitter") or self.splitter is None:
+            return
+        # Breakpoint tuned for 13" laptops; adjust as desired.
+        breakpoint_px = 1400
+        w = self.width()
+        if w < breakpoint_px:
+            if self.splitter.orientation() != Qt.Vertical:
+                self.splitter.setOrientation(Qt.Vertical)
+                # Give top (machine config) more space than bottom.
+                self.splitter.setSizes([700, 500])
+        else:
+            if self.splitter.orientation() != Qt.Horizontal:
+                self.splitter.setOrientation(Qt.Horizontal)
+                # Restore typical wide-screen proportions.
+                self.splitter.setSizes([1100, 820])
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_scale()
+        self._apply_responsive_layout()
 
     def closeEvent(self, event):
 
@@ -1384,7 +1405,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec())
 
 
