@@ -110,6 +110,57 @@ def balanced_allocate(total_days: int, headcount: int) -> List[int]:
     return loads
 
 
+
+
+def chunk_allocate_by_machine(install_days_per_machine: int, qty: int, training_days: int, window: int) -> List[int]:
+    """Allocate work as whole-machine chunks + whole-day training chunks.
+
+    - Install is assigned per-machine (no fractional splitting).
+    - Training is assigned as 1-day chunks.
+    - Returns list of total onsite days per person (sorted desc).
+    - Chooses the minimum headcount that keeps max(person_days) <= window.
+    """
+    install_days_per_machine = int(install_days_per_machine or 0)
+    qty = int(qty or 0)
+    training_days = int(training_days or 0)
+    window = int(window or 0)
+
+    if window <= 0:
+        return []
+    if qty <= 0 and training_days <= 0:
+        return []
+
+    # If there is no install work, allocate training only.
+    if qty <= 0 or install_days_per_machine <= 0:
+        headcount = ceil_int(training_days / window) if training_days > 0 else 0
+        loads = balanced_allocate(training_days, headcount) if headcount > 0 else []
+        return loads
+
+    max_headcount = max(1, qty)  # assigning at most one machine per person for install
+    for headcount in range(1, max_headcount + 1):
+        # Distribute whole machines as evenly as possible.
+        base = qty // headcount
+        rem = qty % headcount
+        machine_counts = [base + (1 if i < rem else 0) for i in range(headcount)]
+        loads = [c * install_days_per_machine for c in machine_counts]
+
+        # Add training days as 1-day chunks to the currently lightest-loaded person.
+        for _ in range(training_days):
+            i = int(np.argmin(loads))
+            loads[i] += 1
+
+        if max(loads) <= window:
+            loads.sort(reverse=True)
+            return loads
+
+    # If we get here, even splitting each machine to its own person can't satisfy the window (should be prevented by validation),
+    # but return a best-effort allocation.
+    loads = [install_days_per_machine] * qty
+    for _ in range(training_days):
+        i = int(np.argmin(loads))
+        loads[i] += 1
+    loads.sort(reverse=True)
+    return loads
 @dataclass
 class ModelInfo:
     item: str
@@ -757,15 +808,15 @@ class MainWindow(QMainWindow):
             eng_headcount = 0
 
             if tech_total > 0:
-                tech_headcount = ceil_int(tech_total / window)
-                tech_alloc = balanced_allocate(tech_total, tech_headcount)
+                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
+                tech_headcount = len(tech_alloc)
                 tech_all.extend(tech_alloc)
                 for i, d in enumerate(tech_alloc, 1):
                     assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
 
             if eng_total > 0:
-                eng_headcount = ceil_int(eng_total / window)
-                eng_alloc = balanced_allocate(eng_total, eng_headcount)
+                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
+                eng_headcount = len(eng_alloc)
                 eng_all.extend(eng_alloc)
                 for i, d in enumerate(eng_alloc, 1):
                     assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
