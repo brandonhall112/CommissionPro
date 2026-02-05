@@ -512,9 +512,15 @@ class MainWindow(QMainWindow):
         self.lbl_title.setObjectName("appTitle")
         h.addWidget(self.lbl_title)
         h.addStretch(1)
-        btn_excel = QPushButton("Open Excel…")
-        btn_excel.clicked.connect(self.open_excel)
-        h.addWidget(btn_excel)
+        btn_load = QPushButton("Load Excel…")
+        btn_load.setToolTip("Load a different Excel workbook (will replace the bundled rates/models for this session).")
+        btn_load.clicked.connect(self.open_excel)
+        h.addWidget(btn_load)
+
+        btn_open_bundled = QPushButton("Open Bundled Excel")
+        btn_open_bundled.setToolTip("Open the Excel workbook that was bundled into this EXE (for verification).")
+        btn_open_bundled.clicked.connect(self.open_bundled_excel)
+        h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -790,6 +796,19 @@ class MainWindow(QMainWindow):
             self.reset_views()
         else:
             self.recalc()
+
+    def open_bundled_excel(self):
+        """Open the bundled Excel workbook in the user's default spreadsheet app."""
+        try:
+            p = resolve_excel_path()
+            if not p or not p.exists():
+                QMessageBox.warning(self, "Bundled Excel not found",
+                                    "The bundled Excel file could not be found inside the app assets.")
+                return
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(p)))
+        except Exception as e:
+            QMessageBox.critical(self, "Open error", str(e))
+
 
     def open_excel(self):
         fp, _ = QFileDialog.getOpenFileName(self, "Select Excel file", "", "Excel (*.xlsx)")
