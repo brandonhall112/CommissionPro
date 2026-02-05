@@ -113,12 +113,16 @@ def balanced_allocate(total_days: int, headcount: int) -> List[int]:
 
 
 def chunk_allocate_by_machine(install_days_per_machine: int, qty: int, training_days: int, window: int) -> List[int]:
-    """Allocate work as whole-machine chunks + whole-day training chunks.
+    """Allocate work using whole-machine install chunks + whole-day training chunks.
 
-    - Install is assigned per-machine (no fractional splitting).
-    - Training is assigned as 1-day chunks.
-    - Returns list of total onsite days per person (sorted desc).
-    - Chooses the minimum headcount that keeps max(person_days) <= window.
+    Install days are assigned per machine (no fractional splitting). Training days are 1-day chunks.
+    We choose the *minimum* headcount that keeps every person's onsite days <= window.
+
+    Training assignment heuristic:
+      - Prefer assigning training to the currently *most-loaded* person that can still accept a day
+        without exceeding the window (keeps extra people from traveling and mirrors reality).
+      - If none can accept, fall back to the least-loaded person (best-effort).
+    Returns a list of total onsite days per person (sorted descending).
     """
     install_days_per_machine = int(install_days_per_machine or 0)
     qty = int(qty or 0)
@@ -136,31 +140,36 @@ def chunk_allocate_by_machine(install_days_per_machine: int, qty: int, training_
         loads = balanced_allocate(training_days, headcount) if headcount > 0 else []
         return loads
 
-    max_headcount = max(1, qty)  # assigning at most one machine per person for install
+    max_headcount = max(1, qty)  # at most one machine per person
     for headcount in range(1, max_headcount + 1):
         # Distribute whole machines as evenly as possible.
-        base = qty // headcount
+        base_n = qty // headcount
         rem = qty % headcount
-        machine_counts = [base + (1 if i < rem else 0) for i in range(headcount)]
+        machine_counts = [base_n + (1 if i < rem else 0) for i in range(headcount)]
         loads = [c * install_days_per_machine for c in machine_counts]
 
-        # Add training days as 1-day chunks to the currently lightest-loaded person.
+        # Assign training days as 1-day chunks.
         for _ in range(training_days):
-            i = int(np.argmin(loads))
+            # Prefer adding to the most-loaded person who can still accept 1 day within window.
+            candidates = [i for i, d in enumerate(loads) if d + 1 <= window]
+            if candidates:
+                i = max(candidates, key=lambda j: loads[j])
+            else:
+                i = int(np.argmin(loads))
             loads[i] += 1
 
         if max(loads) <= window:
             loads.sort(reverse=True)
             return loads
 
-    # If we get here, even splitting each machine to its own person can't satisfy the window (should be prevented by validation),
-    # but return a best-effort allocation.
+    # Best-effort fallback (should generally be prevented by validation).
     loads = [install_days_per_machine] * qty
     for _ in range(training_days):
         i = int(np.argmin(loads))
         loads[i] += 1
     loads.sort(reverse=True)
     return loads
+
 @dataclass
 class ModelInfo:
     item: str
