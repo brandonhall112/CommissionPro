@@ -378,6 +378,26 @@ class MachineLine(QFrame):
         row.addWidget(self.chk_training, 1)
         row.addWidget(self.btn_delete)
 
+
+    def _model_changed(self, *_):
+        # Hide / show Training Required checkbox based on model-specific applicability.
+        model = (self.cmb_model.currentText() or "").strip()
+        if not model or model.startswith("—"):
+            self.chk_training.setVisible(False)
+            self.on_change()
+            return
+
+        applicable = bool(self.training_applicable_map.get(model, True))
+        if applicable:
+            self.chk_training.setVisible(True)
+            if not self.chk_training.isChecked():
+                self.chk_training.setChecked(True)
+        else:
+            self.chk_training.setVisible(False)
+            self.chk_training.setChecked(False)
+
+        self.on_change()
+
     def _changed(self, *_):
         self.on_change()
 
