@@ -525,10 +525,22 @@ class MainWindow(QMainWindow):
         h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
+                # Main scroll area so the whole window scrolls (prevents nested scrolling on small screens)
+        self.main_scroll = QScrollArea()
+        self.main_scroll.setWidgetResizable(True)
+        self.main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(self.main_scroll, 1)
+
+        main_container = QWidget()
+        self.main_scroll.setWidget(main_container)
+        main_l = QVBoxLayout(main_container)
+        main_l.setContentsMargins(0, 0, 0, 0)
+        main_l.setSpacing(0)
+
         self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
         splitter = self.splitter
-        splitter.setChildrenCollapsible(True)
-        root.addWidget(splitter, 1)
+        main_l.addWidget(splitter, 1)
 
         # LEFT
         left = QFrame()
@@ -586,19 +598,14 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         left_l.addWidget(note)
 
-        splitter.addWidget(left)
-
-        # RIGHT (scrollable)
+        splitter.addWidget(left)        # RIGHT
         right_wrap = QWidget()
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
-
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_layout.addWidget(right_scroll)
+        right_layout.setSpacing(0)
 
         right = QWidget()
-        right_scroll.setWidget(right)
+        right_layout.addWidget(right)
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(14, 14, 14, 14)
         right_l.setSpacing(12)
@@ -685,6 +692,7 @@ class MainWindow(QMainWindow):
         # Responsive scaling baseline (designed for 1920x1200)
         self._base_font_pt = float(self.font().pointSizeF() or 10.0)
         self._apply_scale()
+        self._apply_responsive_layout()
 
     def make_table(self, headers: List[str]) -> QTableWidget:
         tbl = QTableWidget(0, len(headers))
@@ -1373,24 +1381,30 @@ class MainWindow(QMainWindow):
         f.setPointSizeF(pt)
         self.setFont(f)
 
-    
     def _apply_responsive_layout(self):
-        """Responsive layout: stack panels on narrow windows to avoid horizontal scrolling."""
-        if not hasattr(self, "splitter") or self.splitter is None:
-            return
-        # Breakpoint tuned for 13" laptops; adjust as desired.
-        breakpoint_px = 1400
-        w = self.width()
-        if w < breakpoint_px:
-            if self.splitter.orientation() != Qt.Vertical:
+        """Switch between 2-column and single-column layouts for smaller screens."""
+        try:
+            # Breakpoint based on available width
+            w = self.width()
+            vertical = w < 1450  # laptops / small screens
+
+            if vertical:
                 self.splitter.setOrientation(Qt.Vertical)
-                # Give top (machine config) more space than bottom.
-                self.splitter.setSizes([700, 500])
-        else:
-            if self.splitter.orientation() != Qt.Horizontal:
+                # Give the chart less vertical dominance in single-column mode
+                self.chart_view.setMinimumHeight(220)
+                self.chart_view.setMaximumHeight(260)
+            else:
                 self.splitter.setOrientation(Qt.Horizontal)
-                # Restore typical wide-screen proportions.
-                self.splitter.setSizes([1100, 820])
+                self.chart_view.setMinimumHeight(300)
+                self.chart_view.setMaximumHeight(16777215)
+
+            # Help prevent horizontal scrolling due to tables on small screens
+            for tbl in (self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp):
+                if tbl is not None:
+                    tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        except Exception:
+            # Never let layout tweaks crash the app
+            pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
