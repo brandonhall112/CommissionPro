@@ -243,7 +243,7 @@ class ExcelData:
         col_item = find_col(lambda s: s in ["item", "model", "machine", "machine type"])
         col_tech = find_col(lambda s: "technician" in s and "day" in s)
         col_eng = find_col(lambda s: ("engineer" in s and "day" in s) or ("field engineer" in s and "day" in s))
-        col_train_app = find_col(lambda s: ("training required" in s) or ("training" in s and "required" in s))
+        col_train_app = find_col(lambda s: ("training required" in s))
 
         if col_item is None or col_tech is None or col_eng is None:
             raise ValueError("Model sheet columns not found. Expected: Item, Technician Days Required, Field Engineer Days Required.")
@@ -254,9 +254,9 @@ class ExcelData:
             if isinstance(v, bool):
                 return v
             s = str(v).strip().lower()
-            if s in ("true", "t", "yes", "y", "1"):
+            if s in ("true","t","yes","y","1"):
                 return True
-            if s in ("false", "f", "no", "n", "0"):
+            if s in ("false","f","no","n","0"):
                 return False
             return default
 
@@ -352,10 +352,8 @@ class MachineLine(QFrame):
         self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cmb_model.addItem("— Select —")
         self.cmb_model.addItems(models)
-        self.cmb_model.setCurrentIndex(0)
+        self.cmb_model.setCurrentIndex(-1)
         self.cmb_model.currentIndexChanged.connect(self._model_changed)
-        # Initialize checkbox visibility based on model selection
-        self._model_changed()
 
         self.spin_qty = QSpinBox()
         self.spin_qty.setRange(0, 999)
@@ -378,27 +376,27 @@ class MachineLine(QFrame):
         row.addWidget(self.chk_training, 1)
         row.addWidget(self.btn_delete)
 
-
+        self._model_changed()
     def _model_changed(self, *_):
-        # Hide / show Training Required checkbox based on model-specific applicability.
-        model = (self.cmb_model.currentText() or "").strip()
-        if not model or model.startswith("—"):
-            self.chk_training.setVisible(False)
-            self.on_change()
-            return
-
-        applicable = bool(self.training_applicable_map.get(model, True))
-        if applicable:
-            self.chk_training.setVisible(True)
-            if not self.chk_training.isChecked():
-                self.chk_training.setChecked(True)
-        else:
-            self.chk_training.setVisible(False)
+        model = self.cmb_model.currentText().strip()
+        if model == "— Select —":
+            model = ""
+        if not model:
+            self.chk_training.hide()
             self.chk_training.setChecked(False)
-
+        else:
+            applicable = bool(self.training_applicable_map.get(model, True))
+            if not applicable:
+                self.chk_training.hide()
+                self.chk_training.setChecked(False)
+            else:
+                self.chk_training.show()
+                if not self.chk_training.isChecked():
+                    self.chk_training.setChecked(True)
         self.on_change()
 
     def _changed(self, *_):
+
         self.on_change()
 
     def _delete(self):
@@ -411,7 +409,7 @@ class MachineLine(QFrame):
         return LineSelection(
             model=model,
             qty=int(self.spin_qty.value()) if model else 0,
-            training_required=bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False
+            training_required=(bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False)
         )
 
 
@@ -498,7 +496,6 @@ class MainWindow(QMainWindow):
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
-
         self.lines: List[MachineLine] = []
 
         central = QWidget()
@@ -782,16 +779,6 @@ class MainWindow(QMainWindow):
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
-        ln.show()
-        # Ensure the newly-added row is visible in the scroll area
-        try:
-            self.scroll.ensureWidgetVisible(ln)
-        except Exception:
-            pass
-        try:
-            self.scroll.widget().adjustSize()
-        except Exception:
-            pass
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
@@ -849,7 +836,7 @@ class MainWindow(QMainWindow):
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-            eng_training_potential = base_training if (mi.eng_days_per_machine > 0 and mi.training_applicable) else 0
+            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
             eng_training_days = eng_training_potential if s.training_required else 0
             eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
 
@@ -857,7 +844,7 @@ class MainWindow(QMainWindow):
             if mi.tech_install_days_per_machine + single_training > window:
                 raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
             if mi.eng_days_per_machine > 0:
-                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0 and mi.training_applicable) else 0
+                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
                 if mi.eng_days_per_machine + single_eng_training > window:
                     raise ValueError(
                         f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
