@@ -762,6 +762,16 @@ class MainWindow(QMainWindow):
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
+        ln.show()
+        # Ensure the newly-added row is visible in the scroll area
+        try:
+            self.scroll.ensureWidgetVisible(ln)
+        except Exception:
+            pass
+        try:
+            self.scroll.widget().adjustSize()
+        except Exception:
+            pass
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
