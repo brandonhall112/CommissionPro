@@ -70,7 +70,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
+    QStackedWidget,
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
@@ -525,26 +526,40 @@ class MainWindow(QMainWindow):
         h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
-                # Main scroll area so the whole window scrolls (prevents nested scrolling on small screens)
-        self.main_scroll = QScrollArea()
-        self.main_scroll.setWidgetResizable(True)
-        self.main_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        root.addWidget(self.main_scroll, 1)
+                # Central area: wide mode (fixed left + scrollable right) and narrow mode (single stack + whole-window scroll)
+        self._layout_mode = None  # "wide" or "narrow"
 
-        main_container = QWidget()
-        self.main_scroll.setWidget(main_container)
-        main_l = QVBoxLayout(main_container)
-        main_l.setContentsMargins(0, 0, 0, 0)
-        main_l.setSpacing(0)
+        self.central_stack = QStackedWidget()
+        root.addWidget(self.central_stack, 1)
+
+        # --- Wide page (no whole-window scroll; right column scrolls) ---
+        self.page_wide = QWidget()
+        self.central_stack.addWidget(self.page_wide)
+        wide_l = QVBoxLayout(self.page_wide)
+        wide_l.setContentsMargins(0, 0, 0, 0)
+        wide_l.setSpacing(0)
 
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         splitter = self.splitter
-        main_l.addWidget(splitter, 1)
+        wide_l.addWidget(splitter, 1)
+
+        # --- Narrow page (whole window scroll; single stack) ---
+        self.page_narrow = QScrollArea()
+        self.page_narrow.setWidgetResizable(True)
+        self.page_narrow.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.central_stack.addWidget(self.page_narrow)
+
+        self.narrow_container = QWidget()
+        self.page_narrow.setWidget(self.narrow_container)
+        self.narrow_layout = QVBoxLayout(self.narrow_container)
+        self.narrow_layout.setContentsMargins(0, 0, 0, 0)
+        self.narrow_layout.setSpacing(12)
 
         # LEFT
         left = QFrame()
         left.setObjectName("panel")
+        self.left_panel = left
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(14, 14, 14, 14)
         left_l.setSpacing(12)
@@ -603,6 +618,14 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
+
+        # In wide mode, we keep the left fixed and scroll only the right panel.
+        self.right_wrap = right_wrap
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_scroll.setFrameShape(QFrame.NoFrame)
+        self.right_scroll.setWidget(self.right_wrap)
 
         right = QWidget()
         right_layout.addWidget(right)
@@ -682,7 +705,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(self.btn_print)
         right_l.addWidget(bottom)
 
-        splitter.addWidget(right_wrap)
+        splitter.addWidget(self.right_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
 
@@ -1382,28 +1405,82 @@ class MainWindow(QMainWindow):
         self.setFont(f)
 
     def _apply_responsive_layout(self):
-        """Switch between 2-column and single-column layouts for smaller screens."""
+        """Wide: fixed left + scrollable right. Narrow: single stack + whole-window scroll."""
         try:
-            # Breakpoint based on available width
             w = self.width()
-            vertical = w < 1450  # laptops / small screens
+            narrow = w < 1450  # laptops / small screens
 
-            if vertical:
-                self.splitter.setOrientation(Qt.Vertical)
-                # Give the chart less vertical dominance in single-column mode
-                self.chart_view.setMinimumHeight(220)
-                self.chart_view.setMaximumHeight(260)
-            else:
+            if narrow and self._layout_mode != "narrow":
+                self._layout_mode = "narrow"
+                self.central_stack.setCurrentWidget(self.page_narrow)
+
+                # Move widgets into single stack
+                # Take right panel out of the wide scroll area
+                try:
+                    if self.right_scroll.widget() is not None:
+                        self.right_scroll.takeWidget()
+                except Exception:
+                    pass
+
+                # Detach from splitter and add to narrow layout
+                for wid in (self.left_panel, self.right_wrap):
+                    try:
+                        wid.setParent(None)
+                    except Exception:
+                        pass
+
+                # Ensure order: left first, then right
+                if self.narrow_layout.indexOf(self.left_panel) == -1:
+                    self.narrow_layout.insertWidget(0, self.left_panel)
+                if self.narrow_layout.indexOf(self.right_wrap) == -1:
+                    self.narrow_layout.addWidget(self.right_wrap)
+
+                # Chart should shrink a bit in narrow mode
+                if hasattr(self, "chart_view"):
+                    self.chart_view.setMinimumHeight(220)
+                    self.chart_view.setMaximumHeight(280)
+
+            elif (not narrow) and self._layout_mode != "wide":
+                self._layout_mode = "wide"
+                self.central_stack.setCurrentWidget(self.page_wide)
+
+                # Remove from narrow stack
+                try:
+                    self.narrow_layout.removeWidget(self.left_panel)
+                    self.narrow_layout.removeWidget(self.right_wrap)
+                except Exception:
+                    pass
+                try:
+                    self.left_panel.setParent(None)
+                    self.right_wrap.setParent(None)
+                except Exception:
+                    pass
+
+                # Restore right scroll widget
+                try:
+                    self.right_scroll.setWidget(self.right_wrap)
+                except Exception:
+                    pass
+
+                # Ensure splitter has left and right scroll in correct order
+                # (Splitter may be empty after reparenting)
+                if self.splitter.indexOf(self.left_panel) == -1:
+                    self.splitter.insertWidget(0, self.left_panel)
+                if self.splitter.indexOf(self.right_scroll) == -1:
+                    self.splitter.insertWidget(1, self.right_scroll)
                 self.splitter.setOrientation(Qt.Horizontal)
-                self.chart_view.setMinimumHeight(300)
-                self.chart_view.setMaximumHeight(16777215)
+                self.splitter.setStretchFactor(0, 1)
+                self.splitter.setStretchFactor(1, 2)
+
+                if hasattr(self, "chart_view"):
+                    self.chart_view.setMinimumHeight(300)
+                    self.chart_view.setMaximumHeight(16777215)
 
             # Help prevent horizontal scrolling due to tables on small screens
             for tbl in (self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp):
                 if tbl is not None:
                     tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         except Exception:
-            # Never let layout tweaks crash the app
             pass
 
     def resizeEvent(self, event):
