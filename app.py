@@ -352,8 +352,10 @@ class MachineLine(QFrame):
         self.cmb_model.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.cmb_model.addItem("— Select —")
         self.cmb_model.addItems(models)
-        self.cmb_model.setCurrentIndex(-1)
+        self.cmb_model.setCurrentIndex(0)
         self.cmb_model.currentIndexChanged.connect(self._model_changed)
+        # Initialize checkbox visibility based on model selection
+        self._model_changed()
 
         self.spin_qty = QSpinBox()
         self.spin_qty.setRange(0, 999)
