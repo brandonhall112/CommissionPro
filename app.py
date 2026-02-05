@@ -175,6 +175,7 @@ class ModelInfo:
     item: str
     tech_install_days_per_machine: int   # install-only (no training baked in)
     eng_days_per_machine: int
+    training_applicable: bool = True
 
 
 @dataclass
@@ -242,9 +243,22 @@ class ExcelData:
         col_item = find_col(lambda s: s in ["item", "model", "machine", "machine type"])
         col_tech = find_col(lambda s: "technician" in s and "day" in s)
         col_eng = find_col(lambda s: ("engineer" in s and "day" in s) or ("field engineer" in s and "day" in s))
+        col_train_app = find_col(lambda s: ("training required" in s) or ("training" in s and "required" in s))
 
         if col_item is None or col_tech is None or col_eng is None:
             raise ValueError("Model sheet columns not found. Expected: Item, Technician Days Required, Field Engineer Days Required.")
+
+        def _as_bool(v, default=True):
+            if v is None:
+                return default
+            if isinstance(v, bool):
+                return v
+            s = str(v).strip().lower()
+            if s in ("true", "t", "yes", "y", "1"):
+                return True
+            if s in ("false", "f", "no", "n", "0"):
+                return False
+            return default
 
         for r in range(2, ws.max_row + 1):
             item = ws.cell(r, col_item).value
@@ -263,7 +277,8 @@ class ExcelData:
                 eng_i = int(float(eng))
             except Exception:
                 eng_i = 0
-            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i)
+            train_app = _as_bool(ws.cell(r, col_train_app).value, default=True) if col_train_app is not None else True
+            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i, training_applicable=train_app)
 
         # Rates: Service Rates
         if "Service Rates" not in wb.sheetnames:
@@ -322,10 +337,11 @@ class ExcelData:
 
 
 class MachineLine(QFrame):
-    def __init__(self, models: List[str], on_change, on_delete):
+    def __init__(self, models: List[str], training_applicable_map: Dict[str, bool], on_change, on_delete):
         super().__init__()
         self.on_change = on_change
         self.on_delete = on_delete
+        self.training_applicable_map = training_applicable_map
 
         self.setObjectName("machineLine")
         row = QHBoxLayout(self)
@@ -337,7 +353,7 @@ class MachineLine(QFrame):
         self.cmb_model.addItem("— Select —")
         self.cmb_model.addItems(models)
         self.cmb_model.setCurrentIndex(-1)
-        self.cmb_model.currentIndexChanged.connect(self._changed)
+        self.cmb_model.currentIndexChanged.connect(self._model_changed)
 
         self.spin_qty = QSpinBox()
         self.spin_qty.setRange(0, 999)
@@ -373,7 +389,7 @@ class MachineLine(QFrame):
         return LineSelection(
             model=model,
             qty=int(self.spin_qty.value()) if model else 0,
-            training_required=bool(self.chk_training.isChecked())
+            training_required=bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False
         )
 
 
@@ -459,6 +475,8 @@ class MainWindow(QMainWindow):
 
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
+        self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
+
         self.lines: List[MachineLine] = []
 
         central = QWidget()
@@ -739,7 +757,7 @@ class MainWindow(QMainWindow):
     def add_line(self):
         if self.empty_hint is not None:
             self.empty_hint.hide()
-        ln = MachineLine(self.models_sorted, on_change=self.recalc, on_delete=self.delete_line)
+        ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
         self.recalc()
@@ -794,20 +812,20 @@ class MainWindow(QMainWindow):
 
         for s in selections:
             mi = self.data.models[s.model]
-            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY)
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
             training_days = base_training if s.training_required else 0
 
             tech_install_total = mi.tech_install_days_per_machine * s.qty
             tech_total = tech_install_total + training_days
-            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
+            eng_training_potential = base_training if (mi.eng_days_per_machine > 0 and mi.training_applicable) else 0
             eng_training_days = eng_training_potential if s.training_required else 0
             eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
 
-            single_training = 1 if s.training_required else 0
+            single_training = 1 if (s.training_required and mi.training_applicable) else 0
             if mi.tech_install_days_per_machine + single_training > window:
                 raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
             if mi.eng_days_per_machine > 0:
-                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
+                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0 and mi.training_applicable) else 0
                 if mi.eng_days_per_machine + single_eng_training > window:
                     raise ValueError(
                         f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
@@ -836,6 +854,7 @@ class MainWindow(QMainWindow):
                 "training_days": training_days,
                 "training_potential": base_training,
                 "training_required": s.training_required,
+                "training_applicable": bool(mi.training_applicable),
                 "eng_training_days": eng_training_days,
                 "eng_training_potential": eng_training_potential,
                 "tech_total": tech_total,
@@ -1032,11 +1051,29 @@ class MainWindow(QMainWindow):
             rows = meta["machine_rows"]
             self.tbl_breakdown.setRowCount(len(rows))
             for r_i, r in enumerate(rows):
-                tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-                eng_disp = "—" if r["eng_total"] == 0 else (
-                    f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_potential', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
-                )
+                # Training display rules:
+                # - If training is not applicable for this model, hide all training UI/labels.
+                # - If applicable but user unchecked training, show “(training excluded)”.
+                if not r.get("training_applicable", True):
+                    tech_disp = str(r["tech_total"])
+                else:
+                    if r.get("training_required", True):
+                        tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r.get("training_days", 0) > 0 else str(r["tech_total"])
+                    else:
+                        tech_disp = f"{r['tech_total']} (training excluded)"
+
+                if r["eng_total"] == 0:
+                    eng_disp = "—"
+                elif not r.get("training_applicable", True):
+                    eng_disp = str(r["eng_total"])
+                else:
+                    eng_tp = r.get("eng_training_potential", 0)
+                    eng_td = r.get("eng_training_days", 0)
+                    if r.get("training_required", True):
+                        eng_disp = f"{r['eng_total']} (incl. {eng_td} Train)" if (eng_tp > 0 and eng_td > 0) else str(r["eng_total"])
+                    else:
+                        eng_disp = f"{r['eng_total']} (training excluded)" if eng_tp > 0 else str(r["eng_total"])
+
                 vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
                         "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
                         "—" if r["eng_headcount"] == 0 else str(r["eng_headcount"])]
@@ -1129,11 +1166,26 @@ class MainWindow(QMainWindow):
 
         mr = []
         for r in meta["machine_rows"]:
-            tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r["training_required"] else f"{r['tech_total']} (training excluded)"
-            eng_disp = "—" if r["eng_total"] == 0 else (
-                    f"{r['eng_total']} (incl. {r.get('eng_training_days', 0)} Train)" if (r.get('eng_training_days', 0) > 0 and r.get('training_required', False))
-                    else (f"{r['eng_total']} (training excluded)" if (r.get('eng_training_potential', 0) > 0 and not r.get('training_required', True)) else str(r['eng_total']))
-                )
+            if not r.get("training_applicable", True):
+                tech_disp = str(r["tech_total"])
+            else:
+                if r.get("training_required", True):
+                    tech_disp = f"{r['tech_total']} (incl. {r['training_days']} Train)" if r.get("training_days", 0) > 0 else str(r["tech_total"])
+                else:
+                    tech_disp = f"{r['tech_total']} (training excluded)"
+
+            if r["eng_total"] == 0:
+                eng_disp = "—"
+            elif not r.get("training_applicable", True):
+                eng_disp = str(r["eng_total"])
+            else:
+                eng_tp = r.get("eng_training_potential", 0)
+                eng_td = r.get("eng_training_days", 0)
+                if r.get("training_required", True):
+                    eng_disp = f"{r['eng_total']} (incl. {eng_td} Train)" if (eng_tp > 0 and eng_td > 0) else str(r["eng_total"])
+                else:
+                    eng_disp = f"{r['eng_total']} (training excluded)" if eng_tp > 0 else str(r["eng_total"])
+
             mr.append(f"""<tr>
                 <td>{r['model']}</td>
                 <td style="text-align:center;">{r['qty']}</td>
