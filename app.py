@@ -179,6 +179,7 @@ class ModelInfo:
     tech_install_days_per_machine: int   # install-only (no training baked in)
     eng_days_per_machine: int
     training_applicable: bool = True
+    travel_required: bool = True
 
 
 @dataclass
@@ -193,6 +194,7 @@ class RoleTotals:
     headcount: int
     total_onsite_days: int
     onsite_days_by_person: List[int]
+    travel_required_by_person: List[bool]
     day_rate: float
     labor_cost: float
 
@@ -247,6 +249,7 @@ class ExcelData:
         col_tech = find_col(lambda s: "technician" in s and "day" in s)
         col_eng = find_col(lambda s: ("engineer" in s and "day" in s) or ("field engineer" in s and "day" in s))
         col_train_app = find_col(lambda s: ("training required" in s))
+        col_travel_req = find_col(lambda s: ("travel required" in s))
 
         if col_item is None or col_tech is None or col_eng is None:
             raise ValueError("Model sheet columns not found. Expected: Item, Technician Days Required, Field Engineer Days Required.")
@@ -281,7 +284,8 @@ class ExcelData:
             except Exception:
                 eng_i = 0
             train_app = _as_bool(ws.cell(r, col_train_app).value, default=True) if col_train_app is not None else True
-            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i, training_applicable=train_app)
+            travel_req = _as_bool(ws.cell(r, col_travel_req).value, default=True) if col_travel_req is not None else True
+            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i, training_applicable=train_app, travel_required=travel_req)
 
         # Rates: Service Rates
         if "Service Rates" not in wb.sheetnames:
@@ -879,8 +883,8 @@ class MainWindow(QMainWindow):
 
         machine_rows = []
         assignments: List[Assignment] = []
-        tech_all: List[int] = []
-        eng_all: List[int] = []
+        tech_all: List[tuple[int,bool]] = []
+        eng_all: List[tuple[int,bool]] = []
 
         for s in selections:
             mi = self.data.models[s.model]
@@ -909,14 +913,14 @@ class MainWindow(QMainWindow):
             if tech_total > 0:
                 tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
                 tech_headcount = len(tech_alloc)
-                tech_all.extend(tech_alloc)
+                tech_all.extend([(d, mi.travel_required) for d in tech_alloc])
                 for i, d in enumerate(tech_alloc, 1):
                     assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
 
             if eng_total > 0:
                 eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
                 eng_headcount = len(eng_alloc)
-                eng_all.extend(eng_alloc)
+                eng_all.extend([(d, mi.travel_required) for d in eng_alloc])
                 for i, d in enumerate(eng_alloc, 1):
                     assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
 
@@ -935,13 +939,29 @@ class MainWindow(QMainWindow):
                 "eng_headcount": eng_headcount
             })
 
-        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
-        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
+        tech_pairs = sorted(tech_all, key=lambda x: x[0], reverse=True)
+        tech_days = [d for d,_t in tech_pairs]
+        tech_travel = [t for _d,t in tech_pairs]
+        tech = RoleTotals(len(tech_pairs), sum(tech_days), tech_days, tech_travel, tech_day_rate, float(sum(tech_days)) * tech_day_rate)
+        eng_pairs = sorted(eng_all, key=lambda x: x[0], reverse=True)
+        eng_days = [d for d,_t in eng_pairs]
+        eng_travel = [t for _d,t in eng_pairs]
+        eng = RoleTotals(len(eng_pairs), sum(eng_days), eng_days, eng_travel, eng_day_rate, float(sum(eng_days)) * eng_day_rate)
 
-        trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
-        n_people = len(trip_days_by_person)
-        total_trip_days = sum(trip_days_by_person)
-        total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
+        trip_days_by_person = []
+        traveling_trip_days = []
+        for a in assignments:
+            mi = self.data.models.get(a.model)
+            travel_req = True if mi is None else bool(getattr(mi, 'travel_required', True))
+            td = a.onsite_days + (TRAVEL_DAYS_PER_PERSON if (travel_req and a.onsite_days > 0) else 0)
+            trip_days_by_person.append(td)
+            if travel_req and a.onsite_days > 0:
+                traveling_trip_days.append(td)
+
+        n_people = sum(1 for a in assignments if (self.data.models.get(a.model).travel_required if self.data.models.get(a.model) else True) and a.onsite_days > 0)
+        total_trip_days = sum(traveling_trip_days)
+        total_hotel_nights = sum(max(d - 1, 0) for d in traveling_trip_days)
+
 
         exp_lines: List[ExpenseLine] = []
 
@@ -1009,14 +1029,18 @@ class MainWindow(QMainWindow):
         labels: List[str] = []
         tech_vals: List[int] = []
         eng_vals: List[int] = []
+        tech_travel_flags: List[bool] = []
+        eng_travel_flags: List[bool] = []
 
-        for d in tech.onsite_days_by_person:
+        for idx, d in enumerate(tech.onsite_days_by_person):
             labels.append(f"T{len(tech_vals)+1}")
             tech_vals.append(int(d))
+            tech_travel_flags.append(bool(tech.travel_required_by_person[idx]) if idx < len(tech.travel_required_by_person) else True)
 
-        for d in eng.onsite_days_by_person:
+        for idx, d in enumerate(eng.onsite_days_by_person):
             labels.append(f"E{len(eng_vals)+1}")
             eng_vals.append(int(d))
+            eng_travel_flags.append(bool(eng.travel_required_by_person[idx]) if idx < len(eng.travel_required_by_person) else True)
 
         self.chart.removeAllSeries()
         self.chart.setTitle("Workload (days)")
@@ -1051,7 +1075,7 @@ class MainWindow(QMainWindow):
             if is_tech:
                 v = tech_vals[int(labels[i][1:]) - 1]
                 set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (v > 0 and tech_travel_flags[int(labels[i][1:]) - 1]) else 0.0)
                 set_eng_on.append(0.0)
                 set_eng_tr.append(0.0)
             else:
@@ -1059,7 +1083,7 @@ class MainWindow(QMainWindow):
                 set_tech_on.append(0.0)
                 set_tech_tr.append(0.0)
                 set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (v > 0 and eng_travel_flags[int(labels[i][1:]) - 1]) else 0.0)
 
         series.append(set_tech_on)
         series.append(set_tech_tr)
@@ -1073,11 +1097,16 @@ class MainWindow(QMainWindow):
 
         totals = []
         for i in range(n):
-            if labels[i].startswith("T"):
-                v = tech_vals[int(labels[i][1:]) - 1]
+            label = labels[i]
+            if label.startswith("T"):
+                idx = int(label[1:]) - 1
+                v = tech_vals[idx]
+                tr = tech_travel_flags[idx] if idx < len(tech_travel_flags) else True
             else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
+                idx = int(label[1:]) - 1
+                v = eng_vals[idx]
+                tr = eng_travel_flags[idx] if idx < len(eng_travel_flags) else True
+            totals.append(v + (TRAVEL_DAYS_PER_PERSON if (v > 0 and tr) else 0))
         max_v = max(totals) if totals else 1
 
         axis_x = QValueAxis()
