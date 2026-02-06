@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
         left_l.addWidget(self.scroll, 1)
 
         btn_add = QPushButton("+  Add Machine")
-        btn_add.setObjectName("primary")
+        btn_add.setObjectName("addMachine")
         btn_add.clicked.connect(self.add_line)
         left_l.addWidget(btn_add)
 
@@ -717,6 +717,12 @@ class MainWindow(QMainWindow):
             background: __GOLD__; border: 0px; color: #0B1B2A;
             padding: 10px 12px; border-radius: 10px; font-weight: 800;
         }
+        QPushButton#addMachine {
+            background: #bebebe; border: 0px; color: #0B1B2A;
+            padding: 10px 12px; border-radius: 10px; font-weight: 800;
+        }
+        QPushButton#addMachine:hover { background: #D6D9DD; }
+        QPushButton#addMachine:pressed { background: #CBD5E1; }
         QPushButton {
             padding: 8px 10px; border-radius: 10px;
             border: 1px solid #D6D9DD; background: #F8FAFC;
@@ -739,7 +745,7 @@ class MainWindow(QMainWindow):
             selection-background-color: #DBEAFE;
         }
         QHeaderView::section {
-            background: __RED__;
+            background: #343551;
             color: white;
             padding: 8px;
             border: 0px;
@@ -995,8 +1001,8 @@ class MainWindow(QMainWindow):
             return
 
         # Colors (match UI theme)
-        tech_color = QColor("#C8102E")  # Pearson red
-        eng_color = QColor("#3A3A3A")   # charcoal gray
+        tech_color = QColor("#e04426")  # Tech bar
+        eng_color = QColor("#6790a0")   # Engineer bar
         tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
         eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
 
