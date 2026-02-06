@@ -177,8 +177,7 @@ class ModelInfo:
     item: str
     tech_install_days_per_machine: int   # install-only (no training baked in)
     eng_days_per_machine: int
-    training_applicable: bool = True     # whether this model can ever have training
-    travel_required: bool = True         # whether travel-in/out days should be included
+    training_applicable: bool = True
 
 
 @dataclass
@@ -193,7 +192,6 @@ class RoleTotals:
     headcount: int
     total_onsite_days: int
     onsite_days_by_person: List[int]
-    travel_days_by_person: List[int]
     day_rate: float
     labor_cost: float
 
@@ -833,306 +831,246 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
 
+    def calc(self):
+        selections = [ln.value() for ln in self.lines]
+        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
+        if not selections:
+            raise ValueError("No machines selected. Click “Add Machine” to begin.")
+
+        window = int(self.spin_window.value())
+
+        tech_hr, _ = self.data.get_rate("tech. regular time")
+        eng_hr, _ = self.data.get_rate("eng. regular time")
+        hours_per_day = 8
+        tech_day_rate = tech_hr * hours_per_day
+        eng_day_rate = eng_hr * hours_per_day
+
+        machine_rows = []
+        assignments: List[Assignment] = []
+        tech_all: List[int] = []
+        eng_all: List[int] = []
+
+        for s in selections:
+            mi = self.data.models[s.model]
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
+            training_days = base_training if s.training_required else 0
+
+            tech_install_total = mi.tech_install_days_per_machine * s.qty
+            tech_total = tech_install_total + training_days
+            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
+            eng_training_days = eng_training_potential if s.training_required else 0
+            eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
+
+            single_training = 1 if (s.training_required and mi.training_applicable) else 0
+            if mi.tech_install_days_per_machine + single_training > window:
+                raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
+            if mi.eng_days_per_machine > 0:
+                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
+                if mi.eng_days_per_machine + single_eng_training > window:
+                    raise ValueError(
+                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
+                    )
+
+            tech_headcount = 0
+            eng_headcount = 0
+
+            if tech_total > 0:
+                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
+                tech_headcount = len(tech_alloc)
+                tech_all.extend(tech_alloc)
+                for i, d in enumerate(tech_alloc, 1):
+                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
+
+            if eng_total > 0:
+                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
+                eng_headcount = len(eng_alloc)
+                eng_all.extend(eng_alloc)
+                for i, d in enumerate(eng_alloc, 1):
+                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
+
+            machine_rows.append({
+                "model": s.model,
+                "qty": s.qty,
+                "training_days": training_days,
+                "training_potential": base_training,
+                "training_required": s.training_required,
+                "training_applicable": bool(mi.training_applicable),
+                "eng_training_days": eng_training_days,
+                "eng_training_potential": eng_training_potential,
+                "tech_total": tech_total,
+                "eng_total": eng_total,
+                "tech_headcount": tech_headcount,
+                "eng_headcount": eng_headcount
+            })
+
+        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
+        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
+
+        trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
+        n_people = len(trip_days_by_person)
+        total_trip_days = sum(trip_days_by_person)
+        total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
+
+        exp_lines: List[ExpenseLine] = []
+
+        def add_exp(name, qty, unit, detail):
+            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
+
+        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
+        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
+
+        parking, _ = self.data.get_rate("parking")
+        car, _ = self.data.get_rate("car rental")
+        hotel, _ = self.data.get_rate("hotel")
+        per_diem, _ = self.data.get_rate("per diem weekday")
+        prep, _ = self.data.get_rate("pre/post trip prep")
+        travel_time_rate, _ = self.data.get_rate("travel time")
+
+        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
+        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
+        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
+        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
+        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
+        travel_hours = 16 * n_people
+        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
+
+        exp_total = sum(l.extended for l in exp_lines)
+        max_onsite = max([a.onsite_days for a in assignments], default=0)
+        grand_total = exp_total + tech.labor_cost + eng.labor_cost
+
+        meta = {
+            "machine_rows": machine_rows,
+            "assignments": assignments,
+            "window": window,
+            "max_onsite": max_onsite,
+            "n_people": n_people,
+            "total_trip_days": total_trip_days,
+            "exp_total": exp_total,
+            "grand_total": grand_total
+        }
+        return tech, eng, exp_lines, meta
+
+
+    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
+        """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
+        try:
+            tbl.resizeRowsToContents()
+            header_h = tbl.horizontalHeader().height()
+            frame = tbl.frameWidth() * 2
+            total = header_h + frame + 12
+            n = tbl.rowCount()
+            if visible_rows is not None:
+                n = min(n, int(visible_rows))
+            for r in range(n):
+                total += tbl.rowHeight(r)
+            total = min(total, max_height)
+            tbl.setMinimumHeight(total)
+            tbl.setMaximumHeight(total)
+        except Exception:
+            pass
+
+
     
-def calc(self):
-    """Compute totals + per-person allocations. Returns (tech_role, eng_role, expense_lines, meta)."""
-    window = int(self.spin_window.value())
+    
+    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
+        """Polished horizontal stacked bar chart of onsite + travel days by person."""
+        labels: List[str] = []
+        tech_vals: List[int] = []
+        eng_vals: List[int] = []
 
-    # Gather selections
-    selections: List[Tuple[str, int, bool]] = []
-    for ln in self.lines:
-        model = ln.cmb_model.currentText().strip()
-        if not model or model.startswith("—"):
-            continue
-        qty = int(ln.spin_qty.value())
-        if qty <= 0:
-            continue
-        training_required = bool(ln.chk_training.isChecked()) if ln.chk_training.isVisible() else False
-        selections.append((model, qty, training_required))
+        for d in tech.onsite_days_by_person:
+            labels.append(f"T{len(tech_vals)+1}")
+            tech_vals.append(int(d))
 
-    if not selections:
-        raise ValueError("Add at least one machine model.")
+        for d in eng.onsite_days_by_person:
+            labels.append(f"E{len(eng_vals)+1}")
+            eng_vals.append(int(d))
 
-    tech_rate = float(self.data.rates.get("Technician", 0.0))
-    eng_rate = float(self.data.rates.get("Engineer", 0.0))
-    if tech_rate <= 0 or eng_rate <= 0:
-        raise ValueError("Service Rates tab must include Technician and Engineer daily rates.")
+        self.chart.removeAllSeries()
+        self.chart.setTitle("Workload (days)")
+        self.chart.setBackgroundRoundness(8)
+        self.chart.setAnimationOptions(QChart.SeriesAnimations)
 
-    machine_rows: List[TDict[str, object]] = []
-    assignments: List[Assignment] = []
-
-    # Per-role running person counts
-    tech_people = 0
-    eng_people = 0
-
-    # Track per-person total onsite load (summing across assignment rows)
-    tech_loads: List[int] = []
-    eng_loads: List[int] = []
-
-    # Track whether each person is a traveler (gets travel days + expenses)
-    tech_travel_flags: List[bool] = []
-    eng_travel_flags: List[bool] = []
-
-    nontravel_tech_days = 0
-    nontravel_eng_days = 0
-
-    max_model_duration = 0  # install + 1 training day (if applicable) per person for that model
-
-    for model, qty, training_required in selections:
-        mi = self.data.models.get(model)
-        if not mi:
-            raise ValueError(f"Model not found in Excel: {model}")
-
-        # Base training (1 day per 3 machines, ceil) if applicable and requested
-        training_days = 0
-        if mi.training_applicable and training_required:
-            training_days = int(math.ceil(qty / 3.0))
-
-        # Model duration check (per-person duration for that model)
-        model_duration = int(mi.tech_install_days_per_machine + (1 if (mi.training_applicable and training_required) else 0))
-        max_model_duration = max(max_model_duration, model_duration)
-        if model_duration > window:
-            raise ValueError(
-                f"{model} requires {model_duration} days (install + 1 train day) which exceeds the Customer Install Window ({window})."
-            )
-
-        tech_install_total = int(mi.tech_install_days_per_machine * qty)
-        eng_install_total = int(mi.eng_days_per_machine * qty)
-
-        tech_total = tech_install_total + training_days
-        eng_total = eng_install_total + (training_days if eng_install_total > 0 else 0)
-
-        machine_rows.append({
-            "model": model,
-            "qty": qty,
-            "tech_install_total": tech_install_total,
-            "eng_install_total": eng_install_total,
-            "training_days": training_days,
-            "training_required": training_required,
-            "training_applicable": mi.training_applicable,
-            "tech_total": tech_total,
-            "eng_total": eng_total,
-            "travel_required": mi.travel_required,
-        })
-
-        if mi.travel_required:
-            # Allocate dedicated people for this model (travel applies)
-            tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, qty, training_days, window)
-            for d in tech_alloc:
-                tech_people += 1
-                person = tech_people
-                d = int(d)
-                assignments.append(Assignment("Technician", model, person, d, d * tech_rate))
-                tech_loads.append(d)
-                tech_travel_flags.append(True)
-
-            if eng_install_total > 0:
-                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, qty, training_days, window)
-                for d in eng_alloc:
-                    eng_people += 1
-                    person = eng_people
-                    d = int(d)
-                    assignments.append(Assignment("Engineer", model, person, d, d * eng_rate))
-                    eng_loads.append(d)
-                    eng_travel_flags.append(True)
-        else:
-            # Defer allocation: these days will be added onto existing personnel if possible (no new travel)
-            nontravel_tech_days += tech_total
-            nontravel_eng_days += eng_total
-
-    # ---- Spread non-travel work across existing tech/eng equally, adding travelers only if needed
-    def spread_days(role: str, extra_days: int, loads: List[int], travel_flags: List[bool], day_rate: float):
-        if extra_days <= 0:
+        if len(labels) == 0:
             return
 
-        if not loads:
-            # No existing crew. Treat as local/no-travel work; allocate minimal headcount to fit within window.
-            needed = max(1, int(math.ceil(extra_days / float(window))))
-            base = balanced_allocate(extra_days, needed)
-            for i, d in enumerate(base, start=1):
-                loads.append(int(d))
-                travel_flags.append(False)
-                assignments.append(Assignment(role, "Shared (no travel)", i, int(d), int(d) * day_rate))
-            return
+        # Colors (match UI theme)
+        tech_color = QColor("#C8102E")  # Pearson red
+        eng_color = QColor("#3A3A3A")   # charcoal gray
+        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
+        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
 
-        add_by_person = [0] * len(loads)
-        remaining = int(extra_days)
+        series = QHorizontalStackedBarSeries()
 
-        while remaining > 0:
-            # Find least-loaded person
-            i_min = min(range(len(loads)), key=lambda i: loads[i])
-            if loads[i_min] < window:
-                cap = window - loads[i_min]
-                add = min(cap, remaining)
-                loads[i_min] += add
-                add_by_person[i_min] += add
-                remaining -= add
+        set_tech_on = QBarSet("Tech")
+        set_tech_tr = QBarSet("Tech travel")
+        set_eng_on = QBarSet("Eng")
+        set_eng_tr = QBarSet("Eng travel")
+
+        set_tech_on.setColor(tech_color)
+        set_tech_tr.setColor(tech_travel)
+        set_eng_on.setColor(eng_color)
+        set_eng_tr.setColor(eng_travel)
+
+        n = len(labels)
+        # Build arrays aligned to labels: first tech people then engineer people
+        for i in range(n):
+            is_tech = labels[i].startswith("T")
+            if is_tech:
+                v = tech_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(float(v))
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_eng_on.append(0.0)
+                set_eng_tr.append(0.0)
             else:
-                # Everyone is at cap -> need to add a new person; per your nuance, this triggers travel
-                loads.append(0)
-                travel_flags.append(True)
-                add_by_person.append(0)
+                v = eng_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(0.0)
+                set_tech_tr.append(0.0)
+                set_eng_on.append(float(v))
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
 
-        # Create shared assignment rows only for added days
-        for idx, add in enumerate(add_by_person, start=1):
-            if add > 0:
-                assignments.append(Assignment(role, "Shared (no travel)", idx, int(add), float(add) * day_rate))
+        series.append(set_tech_on)
+        series.append(set_tech_tr)
+        series.append(set_eng_on)
+        series.append(set_eng_tr)
 
-    spread_days("Technician", nontravel_tech_days, tech_loads, tech_travel_flags, tech_rate)
-    spread_days("Engineer", nontravel_eng_days, eng_loads, eng_travel_flags, eng_rate)
+        self.chart.addSeries(series)
 
-    # Build RoleTotals
-    tech_travel_days = [TRAVEL_DAYS_PER_PERSON if t else 0 for t in tech_travel_flags]
-    eng_travel_days = [TRAVEL_DAYS_PER_PERSON if t else 0 for t in eng_travel_flags]
+        axis_y = QBarCategoryAxis()
+        axis_y.append(labels)
 
-    tech_role = RoleTotals(
-        headcount=len(tech_loads),
-        total_onsite_days=int(sum(tech_loads)),
-        onsite_days_by_person=[int(x) for x in tech_loads],
-        travel_days_by_person=[int(x) for x in tech_travel_days],
-        day_rate=tech_rate,
-        labor_cost=float(sum(tech_loads)) * tech_rate,
-    )
-    eng_role = RoleTotals(
-        headcount=len(eng_loads),
-        total_onsite_days=int(sum(eng_loads)),
-        onsite_days_by_person=[int(x) for x in eng_loads],
-        travel_days_by_person=[int(x) for x in eng_travel_days],
-        day_rate=eng_rate,
-        labor_cost=float(sum(eng_loads)) * eng_rate,
-    )
+        totals = []
+        for i in range(n):
+            if labels[i].startswith("T"):
+                v = tech_vals[int(labels[i][1:]) - 1]
+            else:
+                v = eng_vals[int(labels[i][1:]) - 1]
+            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
+        max_v = max(totals) if totals else 1
 
-    # ---- Expenses
-    # Only travelers generate travel expenses
-    traveler_count = int(sum(1 for t in tech_travel_flags if t) + sum(1 for t in eng_travel_flags if t))
-    trip_days = 0
-    hotel_nights = 0
+        axis_x = QValueAxis()
+        axis_x.setRange(0, max(1, int(max_v)))
+        axis_x.setLabelFormat("%d")
+        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
 
-    for onsite, tr in zip(tech_loads, tech_travel_days):
-        if tr:
-            td = int(onsite + tr)
-            trip_days += td
-            hotel_nights += max(td - 1, 0)
-    for onsite, tr in zip(eng_loads, eng_travel_days):
-        if tr:
-            td = int(onsite + tr)
-            trip_days += td
-            hotel_nights += max(td - 1, 0)
+        for ax in list(self.chart.axes()):
+            self.chart.removeAxis(ax)
 
-    exp_lines: List[ExpenseLine] = []
-    exp_total = 0.0
-    expenses = self.data.expenses.copy()
-    if "Baggage" in expenses:
-        expenses["Baggage"]["rate"] = 150.0
+        self.chart.addAxis(axis_y, Qt.AlignLeft)
+        self.chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_y)
+        series.attachAxis(axis_x)
 
-    for name, cfg in expenses.items():
-        rate = float(cfg.get("rate", 0.0))
-        note = str(cfg.get("note", "")).strip().lower()
+        # Labels/legend polish
+        try:
+            series.setLabelsVisible(True)
+            series.setLabelsPosition(series.LabelsInsideEnd)
+            series.setLabelsFormat("@value")
+        except Exception:
+            pass
 
-        units = 0
-        if traveler_count == 0:
-            units = 0
-        elif "air" in name.lower() or "airfare" in name.lower():
-            units = traveler_count
-        elif "hotel" in name.lower() or "night" in note:
-            units = hotel_nights
-        elif "per person" in note and ("day" in note or "daily" in note):
-            units = trip_days
-        elif "day" in note or "daily" in note:
-            units = trip_days
-        else:
-            units = trip_days
-
-        line_total = units * rate
-        exp_total += line_total
-        exp_lines.append(ExpenseLine(name, units, rate, line_total))
-
-    # meta payload for UI + printing
-    meta: TDict[str, object] = {
-        "machine_rows": machine_rows,
-        "assignments": assignments,
-        "max_model_duration": max_model_duration,
-        "exp_total": exp_total,
-    }
-
-    return tech_role, eng_role, exp_lines, meta
-
-def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-    """Horizontal stacked bar chart of onsite + travel days by person."""
-    labels: List[str] = []
-    onsite_vals: List[int] = []
-    travel_vals: List[int] = []
-    colors: List[QColor] = []
-    travel_colors: List[QColor] = []
-
-    tech_color = QColor("#C8102E")  # Pearson red
-    eng_color = QColor("#3A3A3A")   # charcoal gray
-    tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
-    eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
-
-    for i, d in enumerate(tech.onsite_days_by_person, start=1):
-        labels.append(f"T{i}")
-        onsite_vals.append(int(d))
-        travel_vals.append(int(tech.travel_days_by_person[i-1]) if i-1 < len(tech.travel_days_by_person) else 0)
-        colors.append(tech_color)
-        travel_colors.append(tech_travel)
-
-    for i, d in enumerate(eng.onsite_days_by_person, start=1):
-        labels.append(f"E{i}")
-        onsite_vals.append(int(d))
-        travel_vals.append(int(eng.travel_days_by_person[i-1]) if i-1 < len(eng.travel_days_by_person) else 0)
-        colors.append(eng_color)
-        travel_colors.append(eng_travel)
-
-    self.chart.removeAllSeries()
-    self.chart.setTitle("Workload (days)")
-    self.chart.setBackgroundRoundness(8)
-    self.chart.setAnimationOptions(QChart.SeriesAnimations)
-
-    if not labels:
-        return
-
-    series = QHorizontalStackedBarSeries()
-
-    set_onsite = QBarSet("Onsite")
-    set_travel = QBarSet("Travel")
-
-    # We want different colors per bar, so we build two series (tech + eng) overlay via zeros.
-    tech_on = QBarSet("Tech onsite"); tech_on.setColor(tech_color)
-    tech_tr = QBarSet("Tech travel"); tech_tr.setColor(tech_travel)
-    eng_on = QBarSet("Eng onsite"); eng_on.setColor(eng_color)
-    eng_tr = QBarSet("Eng travel"); eng_tr.setColor(eng_travel)
-
-    for lab, on, tr in zip(labels, onsite_vals, travel_vals):
-        if lab.startswith("T"):
-            tech_on.append(float(on))
-            tech_tr.append(float(tr))
-            eng_on.append(0.0)
-            eng_tr.append(0.0)
-        else:
-            tech_on.append(0.0)
-            tech_tr.append(0.0)
-            eng_on.append(float(on))
-            eng_tr.append(float(tr))
-
-    series.append(tech_on)
-    series.append(tech_tr)
-    series.append(eng_on)
-    series.append(eng_tr)
-
-    self.chart.addSeries(series)
-
-    axis_y = QBarCategoryAxis()
-    axis_y.append(labels)
-    self.chart.setAxisY(axis_y, series)
-
-    axis_x = QValueAxis()
-    axis_x.setTitleText("Days")
-    axis_x.setLabelFormat("%d")
-    self.chart.setAxisX(axis_x, series)
-
-    self.chart.legend().setVisible(True)
-    self.chart.legend().setAlignment(Qt.AlignBottom)
+        self.chart.legend().setVisible(True)
+        self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
         if len(self.lines) == 0:
