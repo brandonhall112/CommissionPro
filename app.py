@@ -500,11 +500,19 @@ class MainWindow(QMainWindow):
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.lines: List[MachineLine] = []
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        central_container = QWidget()
+        root = QVBoxLayout(central_container)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Outer scroll area enables whole-window scrolling in stacked (single-column) mode
+        self.outer_scroll = QScrollArea()
+        self.outer_scroll.setObjectName("outerScroll")
+        self.outer_scroll.setWidgetResizable(True)
+        self.outer_scroll.setFrameShape(QFrame.NoFrame)
+        self.outer_scroll.setWidget(central_container)
+        self.setCentralWidget(self.outer_scroll)
+
 
         header = QFrame()
         header.setObjectName("header")
@@ -527,6 +535,7 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
+        self.splitter = splitter
         root.addWidget(splitter, 1)
 
         # LEFT
@@ -589,14 +598,17 @@ class MainWindow(QMainWindow):
 
         # RIGHT (scrollable)
         right_wrap = QWidget()
+        self.right_wrap = right_wrap
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
+        self.right_scroll = right_scroll
         right_layout.addWidget(right_scroll)
 
         right = QWidget()
+        self.right_content = right
         right_scroll.setWidget(right)
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(14, 14, 14, 14)
@@ -684,6 +696,11 @@ class MainWindow(QMainWindow):
         # Responsive scaling baseline (designed for 1920x1200)
         self._base_font_pt = float(self.font().pointSizeF() or 10.0)
         self._apply_scale()
+
+        # Responsive layout: two-column w/ right scroll on large screens; single stacked w/ full-window scroll on small screens
+        self._stack_threshold = 1280
+        self._is_stacked = False
+        self._apply_responsive_layout()
 
     def make_table(self, headers: List[str]) -> QTableWidget:
         tbl = QTableWidget(0, len(headers))
@@ -1366,6 +1383,63 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Print error", str(e))
             return
 
+    
+    def _update_right_scroll_height_if_stacked(self):
+        """When stacked, expand the right scroll area to its content so the OUTER scroll handles scrolling."""
+        if not getattr(self, "_is_stacked", False):
+            return
+        try:
+            if hasattr(self, "right_scroll") and hasattr(self, "right_content"):
+                h = int(self.right_content.sizeHint().height()) + 80
+                self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+                self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                self.right_scroll.setMinimumHeight(h)
+                self.right_scroll.setMaximumHeight(h)
+        except Exception:
+            pass
+
+    def _apply_responsive_layout(self):
+        """Large screens: 2 columns w/ right-side scroll. Small screens: single stacked w/ full-window scroll."""
+        if not hasattr(self, "splitter") or not hasattr(self, "outer_scroll") or not hasattr(self, "right_scroll"):
+            return
+
+        w = int(self.width())
+        stacked = w < getattr(self, "_stack_threshold", 1280)
+
+        if stacked and not getattr(self, "_is_stacked", False):
+            self._is_stacked = True
+            self.splitter.setOrientation(Qt.Vertical)
+            # Enable whole-window scrolling; disable inner right scrolling
+            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self._update_right_scroll_height_if_stacked()
+            # Give left pane enough room; right pane will follow under it
+            try:
+                self.splitter.setSizes([650, 1000])
+            except Exception:
+                pass
+
+        elif (not stacked) and getattr(self, "_is_stacked", False):
+            self._is_stacked = False
+            self.splitter.setOrientation(Qt.Horizontal)
+            # Disable whole-window scrolling; allow right column to scroll
+            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            self.right_scroll.setMinimumHeight(0)
+            self.right_scroll.setMaximumHeight(16777215)
+            self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            try:
+                self.splitter.setSizes([520, 1040])
+            except Exception:
+                pass
+
+        elif stacked:
+            # Still stacked; keep heights updated as content changes
+            self._update_right_scroll_height_if_stacked()
+
     def _apply_scale(self):
         # Scale UI typography modestly with window size; keep within sensible bounds.
         w = max(self.width(), 1)
@@ -1380,8 +1454,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._apply_responsive_layout()
         self._apply_scale()
-
     def closeEvent(self, event):
 
         event.accept()
@@ -1390,7 +1464,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec())
 
 
