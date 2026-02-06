@@ -194,9 +194,9 @@ class RoleTotals:
     headcount: int
     total_onsite_days: int
     onsite_days_by_person: List[int]
-    travel_required_by_person: List[bool]
     day_rate: float
     labor_cost: float
+    travel_required_by_person: List[bool]
 
 
 @dataclass
@@ -249,7 +249,6 @@ class ExcelData:
         col_tech = find_col(lambda s: "technician" in s and "day" in s)
         col_eng = find_col(lambda s: ("engineer" in s and "day" in s) or ("field engineer" in s and "day" in s))
         col_train_app = find_col(lambda s: ("training required" in s))
-        col_travel_req = find_col(lambda s: ("travel required" in s))
 
         if col_item is None or col_tech is None or col_eng is None:
             raise ValueError("Model sheet columns not found. Expected: Item, Technician Days Required, Field Engineer Days Required.")
@@ -284,8 +283,7 @@ class ExcelData:
             except Exception:
                 eng_i = 0
             train_app = _as_bool(ws.cell(r, col_train_app).value, default=True) if col_train_app is not None else True
-            travel_req = _as_bool(ws.cell(r, col_travel_req).value, default=True) if col_travel_req is not None else True
-            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i, training_applicable=train_app, travel_required=travel_req)
+            self.models[item] = ModelInfo(item=item, tech_install_days_per_machine=tech_i, eng_days_per_machine=eng_i, training_applicable=train_app)
 
         # Rates: Service Rates
         if "Service Rates" not in wb.sheetnames:
@@ -867,240 +865,182 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
 
-        def calc(self):
-            selections = [ln.value() for ln in self.lines]
-            selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
-            if not selections:
-                raise ValueError("No machines selected. Click “Add Machine” to begin.")
+    def calc(self):
+        selections = [ln.value() for ln in self.lines]
+        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
+        if not selections:
+            raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
-            window = int(self.spin_window.value())
+        window = int(self.spin_window.value())
 
-            tech_hr, _ = self.data.get_rate("tech. regular time")
-            eng_hr, _ = self.data.get_rate("eng. regular time")
-            hours_per_day = 8
-            tech_day_rate = tech_hr * hours_per_day
-            eng_day_rate = eng_hr * hours_per_day
+        tech_hr, _ = self.data.get_rate("tech. regular time")
+        eng_hr, _ = self.data.get_rate("eng. regular time")
+        hours_per_day = 8
+        tech_day_rate = tech_hr * hours_per_day
+        eng_day_rate = eng_hr * hours_per_day
 
-            machine_rows = []
+        machine_rows = []
+        assignments: List[Assignment] = []
+        # Build pooled allocations per role (actual people), tracking whether each person requires travel.
+        tech_loads: List[int] = []
+        tech_travel: List[bool] = []
+        eng_loads: List[int] = []
+        eng_travel: List[bool] = []
 
-            # --- helpers ---
-            def base_training_days(mi: ModelInfo, qty: int) -> int:
-                if not mi.training_applicable:
-                    return 0
-                return ceil_int(qty / TRAINING_MACHINES_PER_DAY)
+        def _merge_nontravel(loads: List[int], travel_flags: List[bool], extra_days: int, window: int) -> None:
+            """Spread extra (non-travel) days across existing people as evenly as possible.
+            If capacity is insufficient, add new people (who then require travel) and rebalance the added work across all."""
+            if extra_days <= 0:
+                return
+            if not loads:
+                # No existing team yet -> create a minimal team to cover the work without forcing travel.
+                # Use 1 person unless it exceeds the window; then add as many as needed.
+                people_needed = max(1, ceil_int(extra_days / window))
+                loads.extend([0] * people_needed)
+                travel_flags.extend([False] * people_needed)
 
-            def training_days_for_role(mi: ModelInfo, qty: int, role_has_days: bool, training_required: bool) -> int:
-                if not role_has_days:
-                    return 0
-                bt = base_training_days(mi, qty)
-                return bt if training_required else 0
+            # First try: fill existing capacity only
+            remaining = extra_days
+            # Greedy: always assign to the currently least-loaded person
+            while remaining > 0:
+                idx = min(range(len(loads)), key=lambda i: loads[i])
+                if loads[idx] >= window:
+                    break
+                loads[idx] += 1
+                remaining -= 1
 
-            def chunks_for_model(mi: ModelInfo, role: str, qty: int, training_required: bool) -> List[int]:
-                if role == "Technician":
-                    per_machine = int(mi.tech_install_days_per_machine or 0)
-                    role_has = per_machine > 0
+            if remaining <= 0:
+                return
+
+            # Not enough capacity -> add new people (these will require travel in/out)
+            additional_people = ceil_int(remaining / window)
+            loads.extend([0] * additional_people)
+            travel_flags.extend([True] * additional_people)
+
+            # Distribute remaining work across the expanded pool
+            while remaining > 0:
+                idx = min(range(len(loads)), key=lambda i: loads[i])
+                if loads[idx] >= window:
+                    # Should not happen, but avoid infinite loop
+                    break
+                loads[idx] += 1
+                remaining -= 1
+
+        for s in selections:
+            mi = self.data.models[s.model]
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
+            training_days = base_training if s.training_required else 0
+
+            # Allocate per-model workload in integer days (chunked), then either:
+            # - add dedicated traveling people (travel_required=True), or
+            # - merge days into existing team (travel_required=False)
+            tech_alloc = chunk_allocate_by_machine(
+                qty=s.qty,
+                install_days_per_machine=mi.tech_install_days_per_machine,
+                training_days=training_days,
+                max_days_per_person=window,
+            )
+            if mi.travel_required:
+                tech_loads.extend(tech_alloc)
+                tech_travel.extend([True] * len(tech_alloc))
+            else:
+                _merge_nontravel(tech_loads, tech_travel, sum(tech_alloc), window)
+
+            if mi.eng_days_per_machine > 0:
+                eng_alloc = chunk_allocate_by_machine(
+                    qty=s.qty,
+                    install_days_per_machine=mi.eng_days_per_machine,
+                    training_days=training_days,
+                    max_days_per_person=window,
+                )
+                if mi.travel_required:
+                    eng_loads.extend(eng_alloc)
+                    eng_travel.extend([True] * len(eng_alloc))
                 else:
-                    per_machine = int(mi.eng_days_per_machine or 0)
-                    role_has = per_machine > 0
+                    _merge_nontravel(eng_loads, eng_travel, sum(eng_alloc), window)
 
-                tdays = training_days_for_role(mi, qty, role_has, training_required)
-                chunks = []
-                if per_machine > 0 and qty > 0:
-                    chunks.extend([per_machine] * int(qty))
-                if tdays > 0:
-                    chunks.extend([1] * int(tdays))
-                return chunks
+        # Rebalance whole-role loads to minimize the peak duration, while keeping travel flags aligned.
+        # (This keeps the tool from producing lopsided results after several machine lines.)
+        if tech_loads:
+            target = balanced_allocate(sum(tech_loads), window)
+            # balanced_allocate returns a new list of loads; preserve travel flags by assigning the heaviest loads to travel-required people first.
+            # Sort indices by current travel flag (travel True first), then by current load desc, and map onto target sorted desc.
+            tgt_sorted = sorted(target, reverse=True)
+            idx_sorted = sorted(range(len(tech_loads)), key=lambda i: (not tech_travel[i], -tech_loads[i]))
+            new_loads = [0] * len(tech_loads)
+            for k, i in enumerate(idx_sorted):
+                new_loads[i] = tgt_sorted[k] if k < len(tgt_sorted) else 0
+            tech_loads = new_loads
 
-            def validate_window(mi: ModelInfo, s: LineSelection):
-                # Validate per-person window constraints (per machine chunk + optional single training day)
-                single_training = 1 if (s.training_required and mi.training_applicable) else 0
-                if mi.tech_install_days_per_machine + single_training > window:
-                    raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
-                if mi.eng_days_per_machine > 0:
-                    single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0 and mi.training_applicable) else 0
-                    if mi.eng_days_per_machine + single_eng_training > window:
-                        raise ValueError(f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window}).")
+        if eng_loads:
+            target = balanced_allocate(sum(eng_loads), window)
+            tgt_sorted = sorted(target, reverse=True)
+            idx_sorted = sorted(range(len(eng_loads)), key=lambda i: (not eng_travel[i], -eng_loads[i]))
+            new_loads = [0] * len(eng_loads)
+            for k, i in enumerate(idx_sorted):
+                new_loads[i] = tgt_sorted[k] if k < len(tgt_sorted) else 0
+            eng_loads = new_loads
 
-            # --- per-role allocation ---
-            def allocate_role(role: str, day_rate: float) -> Tuple[RoleTotals, List[Assignment], Dict[str,int]]:
-                persons: List[Dict[str, object]] = []  # [{days:int, travel:bool}]
-                model_person_days: Dict[Tuple[str, int], int] = {}
+        # Build role totals
+        tech = RoleTotals(
+            headcount=len(tech_loads),
+            total_onsite_days=sum(tech_loads),
+            onsite_days_by_person=tech_loads,
+            day_rate=tech_rate,
+            labor_cost=sum(tech_loads) * tech_rate,
+            travel_required_by_person=tech_travel,
+        )
+        eng = RoleTotals(
+            headcount=len(eng_loads),
+            total_onsite_days=sum(eng_loads),
+            onsite_days_by_person=eng_loads,
+            day_rate=eng_rate,
+            labor_cost=sum(eng_loads) * eng_rate,
+            travel_required_by_person=eng_travel,
+        )
 
-                def new_person(initial_days: int, travel: bool) -> int:
-                    persons.append({"days": int(initial_days), "travel": bool(travel)})
-                    return len(persons)  # 1-based id
+        # Trip days (for expenses): onsite + (travel in/out only for travel-required people)
+        tech_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(tech.onsite_days_by_person, tech.travel_required_by_person)]
+        eng_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(eng.onsite_days_by_person, eng.travel_required_by_person)]
+        trip_days_by_person = tech_trip_days + eng_trip_days
+        exp_lines: List[ExpenseLine] = []
 
-                def add_work(model: str, person_id: int, days: int):
-                    if days <= 0:
-                        return
-                    key = (model, int(person_id))
-                    model_person_days[key] = model_person_days.get(key, 0) + int(days)
-                    persons[person_id - 1]["days"] = int(persons[person_id - 1]["days"]) + int(days)
+        def add_exp(name, qty, unit, detail):
+            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
 
-                # 1) Allocate all TRAVEL-REQUIRED models first (each model gets its own crew due to skill assumptions).
-                for s in selections:
-                    mi = self.data.models[s.model]
-                    validate_window(mi, s)
+        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
+        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
 
-                    per_machine = mi.tech_install_days_per_machine if role == "Technician" else mi.eng_days_per_machine
-                    per_machine = int(per_machine or 0)
-                    if per_machine <= 0:
-                        continue
+        parking, _ = self.data.get_rate("parking")
+        car, _ = self.data.get_rate("car rental")
+        hotel, _ = self.data.get_rate("hotel")
+        per_diem, _ = self.data.get_rate("per diem weekday")
+        prep, _ = self.data.get_rate("pre/post trip prep")
+        travel_time_rate, _ = self.data.get_rate("travel time")
 
-                    tdays = training_days_for_role(mi, s.qty, True, s.training_required)
-                    total = per_machine * int(s.qty) + int(tdays)
-                    if total <= 0:
-                        continue
+        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
+        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
+        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
+        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
+        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
+        travel_hours = 16 * n_people
+        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
 
-                    if mi.travel_required:
-                        alloc = chunk_allocate_by_machine(per_machine, int(s.qty), int(tdays), window)
-                        for d in alloc:
-                            pid = new_person(0, True)
-                            add_work(s.model, pid, int(d))
+        exp_total = sum(l.extended for l in exp_lines)
+        max_onsite = max([a.onsite_days for a in assignments], default=0)
+        grand_total = exp_total + tech.labor_cost + eng.labor_cost
 
-                # 2) Allocate NON-TRAVEL work onto the existing pool first (spread as evenly as possible).
-                #    If we must add a person to stay within the install window, that person *does* require travel.
-                for s in selections:
-                    mi = self.data.models[s.model]
-                    per_machine = mi.tech_install_days_per_machine if role == "Technician" else mi.eng_days_per_machine
-                    per_machine = int(per_machine or 0)
-                    if per_machine <= 0:
-                        continue
-                    if mi.travel_required:
-                        continue  # already handled
-
-                    chunks = chunks_for_model(mi, role, int(s.qty), bool(s.training_required))
-                    for ch in chunks:
-                        # try to place on least-loaded person that can accept this chunk without exceeding window
-                        best_i = None
-                        best_days = None
-                        for i, p in enumerate(persons):
-                            cur = int(p["days"])
-                            if cur + int(ch) <= window:
-                                if best_days is None or cur < best_days:
-                                    best_days = cur
-                                    best_i = i
-                        if best_i is None:
-                            # Need a new person -> travel applies
-                            pid = new_person(0, True)
-                            add_work(s.model, pid, int(ch))
-                        else:
-                            pid = best_i + 1
-                            add_work(s.model, pid, int(ch))
-
-                # Build outputs (preserve person numbering order; no sorting)
-                onsite_days = [int(p["days"]) for p in persons]
-                travel_flags = [bool(p["travel"]) for p in persons]
-                total_onsite = int(sum(onsite_days))
-                labor_cost = float(total_onsite) * float(day_rate)
-
-                # Build assignment rows + per-model headcount (distinct people touching each model)
-                assignments_out: List[Assignment] = []
-                headcount_by_model: Dict[str, int] = {}
-                by_model_people: Dict[str, set] = {}
-                for (model, pid), d in model_person_days.items():
-                    assignments_out.append(Assignment(model, role, int(pid), int(d), float(d) * float(day_rate)))
-                    by_model_people.setdefault(model, set()).add(int(pid))
-                for model, ppl in by_model_people.items():
-                    headcount_by_model[model] = len(ppl)
-
-                role_totals = RoleTotals(len(persons), total_onsite, onsite_days, travel_flags, float(day_rate), float(labor_cost))
-                return role_totals, assignments_out, headcount_by_model
-
-            # --- machine breakdown rows (uses the same training rules as allocation) ---
-            for s in selections:
-                mi = self.data.models[s.model]
-                validate_window(mi, s)
-
-                bt = base_training_days(mi, int(s.qty))
-                training_days = bt if s.training_required else 0
-
-                tech_install_total = int(mi.tech_install_days_per_machine or 0) * int(s.qty)
-                tech_total = tech_install_total + int(training_days)
-
-                eng_training_potential = bt if (int(mi.eng_days_per_machine or 0) > 0) else 0
-                eng_training_days = eng_training_potential if s.training_required else 0
-                eng_total = (int(mi.eng_days_per_machine or 0) * int(s.qty)) + int(eng_training_days)
-
-                machine_rows.append({
-                    "model": s.model,
-                    "qty": int(s.qty),
-                    "training_days": int(training_days),
-                    "training_potential": int(bt),
-                    "training_required": bool(s.training_required),
-                    "training_applicable": bool(mi.training_applicable),
-                    "eng_training_days": int(eng_training_days),
-                    "eng_training_potential": int(eng_training_potential),
-                    "tech_total": int(tech_total),
-                    "eng_total": int(eng_total),
-                    "tech_headcount": 0,  # filled after allocation
-                    "eng_headcount": 0,   # filled after allocation
-                    "travel_required": bool(mi.travel_required),
-                })
-
-            tech, tech_assign, tech_hc = allocate_role("Technician", tech_day_rate)
-            eng, eng_assign, eng_hc = allocate_role("Engineer", eng_day_rate)
-
-            # Fill headcount per model for breakdown display
-            for r in machine_rows:
-                r["tech_headcount"] = int(tech_hc.get(r["model"], 0))
-                r["eng_headcount"] = int(eng_hc.get(r["model"], 0))
-
-            # Combine assignments, stable sort by role then person number
-            assignments = sorted(tech_assign + eng_assign, key=lambda a: (a.role, a.person_num, a.model))
-
-            # --- Expenses: only people who require travel contribute travel-related expenses ---
-            traveling_trip_days = []
-            for d, t in zip(tech.onsite_days_by_person, tech.travel_required_by_person):
-                if t and d > 0:
-                    traveling_trip_days.append(int(d) + TRAVEL_DAYS_PER_PERSON)
-            for d, t in zip(eng.onsite_days_by_person, eng.travel_required_by_person):
-                if t and d > 0:
-                    traveling_trip_days.append(int(d) + TRAVEL_DAYS_PER_PERSON)
-
-            n_people = int(len(traveling_trip_days))
-            total_trip_days = int(sum(traveling_trip_days))
-            total_hotel_nights = int(sum(max(int(d) - 1, 0) for d in traveling_trip_days))
-
-            exp_lines: List[ExpenseLine] = []
-
-            def add_exp(name, qty, unit, detail):
-                exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
-
-            add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
-            add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
-
-            parking, _ = self.data.get_rate("parking")
-            car, _ = self.data.get_rate("car rental")
-            hotel, _ = self.data.get_rate("hotel")
-            per_diem, _ = self.data.get_rate("per diem weekday")
-            prep, _ = self.data.get_rate("pre/post trip prep")
-            travel_time_rate, _ = self.data.get_rate("travel time")
-
-            add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
-            add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
-            add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
-            add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
-            add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
-            travel_hours = 16 * n_people
-            add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
-
-            exp_total = float(sum(l.extended for l in exp_lines))
-            max_onsite = int(max(tech.onsite_days_by_person + eng.onsite_days_by_person, default=0))
-            grand_total = exp_total + tech.labor_cost + eng.labor_cost
-
-            meta = {
-                "machine_rows": machine_rows,
-                "assignments": assignments,
-                "window": window,
-                "max_onsite": max_onsite,
-                "n_people": n_people,
-                "total_trip_days": total_trip_days,
-                "exp_total": exp_total,
-                "grand_total": grand_total
-            }
-            return tech, eng, exp_lines, meta
-
+        meta = {
+            "machine_rows": machine_rows,
+            "assignments": assignments,
+            "window": window,
+            "max_onsite": max_onsite,
+            "n_people": n_people,
+            "total_trip_days": total_trip_days,
+            "exp_total": exp_total,
+            "grand_total": grand_total
+        }
+        return tech, eng, exp_lines, meta
 
 
     def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
@@ -1129,18 +1069,14 @@ class MainWindow(QMainWindow):
         labels: List[str] = []
         tech_vals: List[int] = []
         eng_vals: List[int] = []
-        tech_travel_flags: List[bool] = []
-        eng_travel_flags: List[bool] = []
 
-        for idx, d in enumerate(tech.onsite_days_by_person):
+        for d in tech.onsite_days_by_person:
             labels.append(f"T{len(tech_vals)+1}")
             tech_vals.append(int(d))
-            tech_travel_flags.append(bool(tech.travel_required_by_person[idx]) if idx < len(tech.travel_required_by_person) else True)
 
-        for idx, d in enumerate(eng.onsite_days_by_person):
+        for d in eng.onsite_days_by_person:
             labels.append(f"E{len(eng_vals)+1}")
             eng_vals.append(int(d))
-            eng_travel_flags.append(bool(eng.travel_required_by_person[idx]) if idx < len(eng.travel_required_by_person) else True)
 
         self.chart.removeAllSeries()
         self.chart.setTitle("Workload (days)")
@@ -1175,7 +1111,7 @@ class MainWindow(QMainWindow):
             if is_tech:
                 v = tech_vals[int(labels[i][1:]) - 1]
                 set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (v > 0 and tech_travel_flags[int(labels[i][1:]) - 1]) else 0.0)
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (tech.travel_required_by_person and tech.travel_required_by_person[i]) else 0.0)
                 set_eng_on.append(0.0)
                 set_eng_tr.append(0.0)
             else:
@@ -1183,7 +1119,7 @@ class MainWindow(QMainWindow):
                 set_tech_on.append(0.0)
                 set_tech_tr.append(0.0)
                 set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (v > 0 and eng_travel_flags[int(labels[i][1:]) - 1]) else 0.0)
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (eng.travel_required_by_person and eng.travel_required_by_person[i]) else 0.0)
 
         series.append(set_tech_on)
         series.append(set_tech_tr)
@@ -1196,17 +1132,16 @@ class MainWindow(QMainWindow):
         axis_y.append(labels)
 
         totals = []
-        for i in range(n):
-            label = labels[i]
-            if label.startswith("T"):
-                idx = int(label[1:]) - 1
+        for lab in labels:
+            if lab.startswith("T"):
+                idx = int(lab[1:]) - 1
                 v = tech_vals[idx]
-                tr = tech_travel_flags[idx] if idx < len(tech_travel_flags) else True
+                extra = TRAVEL_DAYS_PER_PERSON if (tech.travel_required_by_person and idx < len(tech.travel_required_by_person) and tech.travel_required_by_person[idx]) else 0
             else:
-                idx = int(label[1:]) - 1
+                idx = int(lab[1:]) - 1
                 v = eng_vals[idx]
-                tr = eng_travel_flags[idx] if idx < len(eng_travel_flags) else True
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if (v > 0 and tr) else 0))
+                extra = TRAVEL_DAYS_PER_PERSON if (eng.travel_required_by_person and idx < len(eng.travel_required_by_person) and eng.travel_required_by_person[idx]) else 0
+            totals.append(v + extra)
         max_v = max(totals) if totals else 1
 
         axis_x = QValueAxis()
