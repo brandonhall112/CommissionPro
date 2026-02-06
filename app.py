@@ -1420,6 +1420,15 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+            # In stacked (single-column) mode, make the machine configuration area taller so
+            # multiple machine lines are visible without feeling cramped.
+            try:
+                if hasattr(self, "scroll"):
+                    self.scroll.setMinimumHeight(320)
+                    self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            except Exception:
+                pass
+
         elif (not stacked) and getattr(self, "_is_stacked", False):
             self._is_stacked = False
             self.splitter.setOrientation(Qt.Horizontal)
@@ -1436,9 +1445,21 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+            # Restore default sizing for wide (two-column) mode.
+            try:
+                if hasattr(self, "scroll"):
+                    self.scroll.setMinimumHeight(0)
+            except Exception:
+                pass
+
         elif stacked:
             # Still stacked; keep heights updated as content changes
             self._update_right_scroll_height_if_stacked()
+            try:
+                if hasattr(self, \"scroll\"):
+                    self.scroll.setMinimumHeight(320)
+            except Exception:
+                pass
 
     def _apply_scale(self):
         # Scale UI typography modestly with window size; keep within sensible bounds.
