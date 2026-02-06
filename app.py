@@ -70,8 +70,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
-    QStackedWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
@@ -178,8 +177,8 @@ class ModelInfo:
     item: str
     tech_install_days_per_machine: int   # install-only (no training baked in)
     eng_days_per_machine: int
-    training_applicable: bool = True
-    travel_required: bool = True
+    training_applicable: bool = True     # whether this model can ever have training
+    travel_required: bool = True         # whether travel-in/out days should be included
 
 
 @dataclass
@@ -194,9 +193,9 @@ class RoleTotals:
     headcount: int
     total_onsite_days: int
     onsite_days_by_person: List[int]
+    travel_days_by_person: List[int]
     day_rate: float
     labor_cost: float
-    travel_required_by_person: List[bool]
 
 
 @dataclass
@@ -528,40 +527,13 @@ class MainWindow(QMainWindow):
         h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
-                # Central area: wide mode (fixed left + scrollable right) and narrow mode (single stack + whole-window scroll)
-        self._layout_mode = None  # "wide" or "narrow"
-
-        self.central_stack = QStackedWidget()
-        root.addWidget(self.central_stack, 1)
-
-        # --- Wide page (no whole-window scroll; right column scrolls) ---
-        self.page_wide = QWidget()
-        self.central_stack.addWidget(self.page_wide)
-        wide_l = QVBoxLayout(self.page_wide)
-        wide_l.setContentsMargins(0, 0, 0, 0)
-        wide_l.setSpacing(0)
-
-        self.splitter = QSplitter(Qt.Horizontal)
-        self.splitter.setChildrenCollapsible(False)
-        splitter = self.splitter
-        wide_l.addWidget(splitter, 1)
-
-        # --- Narrow page (whole window scroll; single stack) ---
-        self.page_narrow = QScrollArea()
-        self.page_narrow.setWidgetResizable(True)
-        self.page_narrow.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.central_stack.addWidget(self.page_narrow)
-
-        self.narrow_container = QWidget()
-        self.page_narrow.setWidget(self.narrow_container)
-        self.narrow_layout = QVBoxLayout(self.narrow_container)
-        self.narrow_layout.setContentsMargins(0, 0, 0, 0)
-        self.narrow_layout.setSpacing(12)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        root.addWidget(splitter, 1)
 
         # LEFT
         left = QFrame()
         left.setObjectName("panel")
-        self.left_panel = left
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(14, 14, 14, 14)
         left_l.setSpacing(12)
@@ -615,22 +587,19 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         left_l.addWidget(note)
 
-        splitter.addWidget(left)        # RIGHT
+        splitter.addWidget(left)
+
+        # RIGHT (scrollable)
         right_wrap = QWidget()
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(0)
 
-        # In wide mode, we keep the left fixed and scroll only the right panel.
-        self.right_wrap = right_wrap
-        self.right_scroll = QScrollArea()
-        self.right_scroll.setWidgetResizable(True)
-        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.right_scroll.setFrameShape(QFrame.NoFrame)
-        self.right_scroll.setWidget(self.right_wrap)
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_layout.addWidget(right_scroll)
 
         right = QWidget()
-        right_layout.addWidget(right)
+        right_scroll.setWidget(right)
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(14, 14, 14, 14)
         right_l.setSpacing(12)
@@ -707,7 +676,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(self.btn_print)
         right_l.addWidget(bottom)
 
-        splitter.addWidget(self.right_scroll)
+        splitter.addWidget(right_wrap)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
 
@@ -717,7 +686,6 @@ class MainWindow(QMainWindow):
         # Responsive scaling baseline (designed for 1920x1200)
         self._base_font_pt = float(self.font().pointSizeF() or 10.0)
         self._apply_scale()
-        self._apply_responsive_layout()
 
     def make_table(self, headers: List[str]) -> QTableWidget:
         tbl = QTableWidget(0, len(headers))
@@ -865,308 +833,306 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
 
-    def calc(self):
-        selections = [ln.value() for ln in self.lines]
-        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
-        if not selections:
-            raise ValueError("No machines selected. Click “Add Machine” to begin.")
+    
+def calc(self):
+    """Compute totals + per-person allocations. Returns (tech_role, eng_role, expense_lines, meta)."""
+    window = int(self.spin_window.value())
 
-        window = int(self.spin_window.value())
+    # Gather selections
+    selections: List[Tuple[str, int, bool]] = []
+    for ln in self.lines:
+        model = ln.cmb_model.currentText().strip()
+        if not model or model.startswith("—"):
+            continue
+        qty = int(ln.spin_qty.value())
+        if qty <= 0:
+            continue
+        training_required = bool(ln.chk_training.isChecked()) if ln.chk_training.isVisible() else False
+        selections.append((model, qty, training_required))
 
-        tech_hr, _ = self.data.get_rate("tech. regular time")
-        eng_hr, _ = self.data.get_rate("eng. regular time")
-        hours_per_day = 8
-        tech_day_rate = tech_hr * hours_per_day
-        eng_day_rate = eng_hr * hours_per_day
+    if not selections:
+        raise ValueError("Add at least one machine model.")
 
-        machine_rows = []
-        assignments: List[Assignment] = []
-        # Build pooled allocations per role (actual people), tracking whether each person requires travel.
-        tech_loads: List[int] = []
-        tech_travel: List[bool] = []
-        eng_loads: List[int] = []
-        eng_travel: List[bool] = []
+    tech_rate = float(self.data.rates.get("Technician", 0.0))
+    eng_rate = float(self.data.rates.get("Engineer", 0.0))
+    if tech_rate <= 0 or eng_rate <= 0:
+        raise ValueError("Service Rates tab must include Technician and Engineer daily rates.")
 
-        def _merge_nontravel(loads: List[int], travel_flags: List[bool], extra_days: int, window: int) -> None:
-            """Spread extra (non-travel) days across existing people as evenly as possible.
-            If capacity is insufficient, add new people (who then require travel) and rebalance the added work across all."""
-            if extra_days <= 0:
-                return
-            if not loads:
-                # No existing team yet -> create a minimal team to cover the work without forcing travel.
-                # Use 1 person unless it exceeds the window; then add as many as needed.
-                people_needed = max(1, ceil_int(extra_days / window))
-                loads.extend([0] * people_needed)
-                travel_flags.extend([False] * people_needed)
+    machine_rows: List[TDict[str, object]] = []
+    assignments: List[Assignment] = []
 
-            # First try: fill existing capacity only
-            remaining = extra_days
-            # Greedy: always assign to the currently least-loaded person
-            while remaining > 0:
-                idx = min(range(len(loads)), key=lambda i: loads[i])
-                if loads[idx] >= window:
-                    break
-                loads[idx] += 1
-                remaining -= 1
+    # Per-role running person counts
+    tech_people = 0
+    eng_people = 0
 
-            if remaining <= 0:
-                return
+    # Track per-person total onsite load (summing across assignment rows)
+    tech_loads: List[int] = []
+    eng_loads: List[int] = []
 
-            # Not enough capacity -> add new people (these will require travel in/out)
-            additional_people = ceil_int(remaining / window)
-            loads.extend([0] * additional_people)
-            travel_flags.extend([True] * additional_people)
+    # Track whether each person is a traveler (gets travel days + expenses)
+    tech_travel_flags: List[bool] = []
+    eng_travel_flags: List[bool] = []
 
-            # Distribute remaining work across the expanded pool
-            while remaining > 0:
-                idx = min(range(len(loads)), key=lambda i: loads[i])
-                if loads[idx] >= window:
-                    # Should not happen, but avoid infinite loop
-                    break
-                loads[idx] += 1
-                remaining -= 1
+    nontravel_tech_days = 0
+    nontravel_eng_days = 0
 
-        for s in selections:
-            mi = self.data.models[s.model]
-            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
-            training_days = base_training if s.training_required else 0
+    max_model_duration = 0  # install + 1 training day (if applicable) per person for that model
 
-            # Allocate per-model workload in integer days (chunked), then either:
-            # - add dedicated traveling people (travel_required=True), or
-            # - merge days into existing team (travel_required=False)
-            tech_alloc = chunk_allocate_by_machine(
-                qty=s.qty,
-                install_days_per_machine=mi.tech_install_days_per_machine,
-                training_days=training_days,
-                max_days_per_person=window,
+    for model, qty, training_required in selections:
+        mi = self.data.models.get(model)
+        if not mi:
+            raise ValueError(f"Model not found in Excel: {model}")
+
+        # Base training (1 day per 3 machines, ceil) if applicable and requested
+        training_days = 0
+        if mi.training_applicable and training_required:
+            training_days = int(math.ceil(qty / 3.0))
+
+        # Model duration check (per-person duration for that model)
+        model_duration = int(mi.tech_install_days_per_machine + (1 if (mi.training_applicable and training_required) else 0))
+        max_model_duration = max(max_model_duration, model_duration)
+        if model_duration > window:
+            raise ValueError(
+                f"{model} requires {model_duration} days (install + 1 train day) which exceeds the Customer Install Window ({window})."
             )
-            if mi.travel_required:
-                tech_loads.extend(tech_alloc)
-                tech_travel.extend([True] * len(tech_alloc))
-            else:
-                _merge_nontravel(tech_loads, tech_travel, sum(tech_alloc), window)
 
-            if mi.eng_days_per_machine > 0:
-                eng_alloc = chunk_allocate_by_machine(
-                    qty=s.qty,
-                    install_days_per_machine=mi.eng_days_per_machine,
-                    training_days=training_days,
-                    max_days_per_person=window,
-                )
-                if mi.travel_required:
-                    eng_loads.extend(eng_alloc)
-                    eng_travel.extend([True] * len(eng_alloc))
-                else:
-                    _merge_nontravel(eng_loads, eng_travel, sum(eng_alloc), window)
+        tech_install_total = int(mi.tech_install_days_per_machine * qty)
+        eng_install_total = int(mi.eng_days_per_machine * qty)
 
-        # Rebalance whole-role loads to minimize the peak duration, while keeping travel flags aligned.
-        # (This keeps the tool from producing lopsided results after several machine lines.)
-        if tech_loads:
-            target = balanced_allocate(sum(tech_loads), window)
-            # balanced_allocate returns a new list of loads; preserve travel flags by assigning the heaviest loads to travel-required people first.
-            # Sort indices by current travel flag (travel True first), then by current load desc, and map onto target sorted desc.
-            tgt_sorted = sorted(target, reverse=True)
-            idx_sorted = sorted(range(len(tech_loads)), key=lambda i: (not tech_travel[i], -tech_loads[i]))
-            new_loads = [0] * len(tech_loads)
-            for k, i in enumerate(idx_sorted):
-                new_loads[i] = tgt_sorted[k] if k < len(tgt_sorted) else 0
-            tech_loads = new_loads
+        tech_total = tech_install_total + training_days
+        eng_total = eng_install_total + (training_days if eng_install_total > 0 else 0)
 
-        if eng_loads:
-            target = balanced_allocate(sum(eng_loads), window)
-            tgt_sorted = sorted(target, reverse=True)
-            idx_sorted = sorted(range(len(eng_loads)), key=lambda i: (not eng_travel[i], -eng_loads[i]))
-            new_loads = [0] * len(eng_loads)
-            for k, i in enumerate(idx_sorted):
-                new_loads[i] = tgt_sorted[k] if k < len(tgt_sorted) else 0
-            eng_loads = new_loads
+        machine_rows.append({
+            "model": model,
+            "qty": qty,
+            "tech_install_total": tech_install_total,
+            "eng_install_total": eng_install_total,
+            "training_days": training_days,
+            "training_required": training_required,
+            "training_applicable": mi.training_applicable,
+            "tech_total": tech_total,
+            "eng_total": eng_total,
+            "travel_required": mi.travel_required,
+        })
 
-        # Build role totals
-        tech = RoleTotals(
-            headcount=len(tech_loads),
-            total_onsite_days=sum(tech_loads),
-            onsite_days_by_person=tech_loads,
-            day_rate=tech_rate,
-            labor_cost=sum(tech_loads) * tech_rate,
-            travel_required_by_person=tech_travel,
-        )
-        eng = RoleTotals(
-            headcount=len(eng_loads),
-            total_onsite_days=sum(eng_loads),
-            onsite_days_by_person=eng_loads,
-            day_rate=eng_rate,
-            labor_cost=sum(eng_loads) * eng_rate,
-            travel_required_by_person=eng_travel,
-        )
+        if mi.travel_required:
+            # Allocate dedicated people for this model (travel applies)
+            tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, qty, training_days, window)
+            for d in tech_alloc:
+                tech_people += 1
+                person = tech_people
+                d = int(d)
+                assignments.append(Assignment("Technician", model, person, d, d * tech_rate))
+                tech_loads.append(d)
+                tech_travel_flags.append(True)
 
-        # Trip days (for expenses): onsite + (travel in/out only for travel-required people)
-        tech_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(tech.onsite_days_by_person, tech.travel_required_by_person)]
-        eng_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(eng.onsite_days_by_person, eng.travel_required_by_person)]
-        trip_days_by_person = tech_trip_days + eng_trip_days
-        exp_lines: List[ExpenseLine] = []
+            if eng_install_total > 0:
+                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, qty, training_days, window)
+                for d in eng_alloc:
+                    eng_people += 1
+                    person = eng_people
+                    d = int(d)
+                    assignments.append(Assignment("Engineer", model, person, d, d * eng_rate))
+                    eng_loads.append(d)
+                    eng_travel_flags.append(True)
+        else:
+            # Defer allocation: these days will be added onto existing personnel if possible (no new travel)
+            nontravel_tech_days += tech_total
+            nontravel_eng_days += eng_total
 
-        def add_exp(name, qty, unit, detail):
-            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
-
-        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
-        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
-
-        parking, _ = self.data.get_rate("parking")
-        car, _ = self.data.get_rate("car rental")
-        hotel, _ = self.data.get_rate("hotel")
-        per_diem, _ = self.data.get_rate("per diem weekday")
-        prep, _ = self.data.get_rate("pre/post trip prep")
-        travel_time_rate, _ = self.data.get_rate("travel time")
-
-        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
-        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
-        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
-        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
-        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
-        travel_hours = 16 * n_people
-        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
-
-        exp_total = sum(l.extended for l in exp_lines)
-        max_onsite = max([a.onsite_days for a in assignments], default=0)
-        grand_total = exp_total + tech.labor_cost + eng.labor_cost
-
-        meta = {
-            "machine_rows": machine_rows,
-            "assignments": assignments,
-            "window": window,
-            "max_onsite": max_onsite,
-            "n_people": n_people,
-            "total_trip_days": total_trip_days,
-            "exp_total": exp_total,
-            "grand_total": grand_total
-        }
-        return tech, eng, exp_lines, meta
-
-
-    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
-        """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
-        try:
-            tbl.resizeRowsToContents()
-            header_h = tbl.horizontalHeader().height()
-            frame = tbl.frameWidth() * 2
-            total = header_h + frame + 12
-            n = tbl.rowCount()
-            if visible_rows is not None:
-                n = min(n, int(visible_rows))
-            for r in range(n):
-                total += tbl.rowHeight(r)
-            total = min(total, max_height)
-            tbl.setMinimumHeight(total)
-            tbl.setMaximumHeight(total)
-        except Exception:
-            pass
-
-
-    
-    
-    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-        """Polished horizontal stacked bar chart of onsite + travel days by person."""
-        labels: List[str] = []
-        tech_vals: List[int] = []
-        eng_vals: List[int] = []
-
-        for d in tech.onsite_days_by_person:
-            labels.append(f"T{len(tech_vals)+1}")
-            tech_vals.append(int(d))
-
-        for d in eng.onsite_days_by_person:
-            labels.append(f"E{len(eng_vals)+1}")
-            eng_vals.append(int(d))
-
-        self.chart.removeAllSeries()
-        self.chart.setTitle("Workload (days)")
-        self.chart.setBackgroundRoundness(8)
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
-
-        if len(labels) == 0:
+    # ---- Spread non-travel work across existing tech/eng equally, adding travelers only if needed
+    def spread_days(role: str, extra_days: int, loads: List[int], travel_flags: List[bool], day_rate: float):
+        if extra_days <= 0:
             return
 
-        # Colors (match UI theme)
-        tech_color = QColor("#C8102E")  # Pearson red
-        eng_color = QColor("#3A3A3A")   # charcoal gray
-        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
-        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+        if not loads:
+            # No existing crew. Treat as local/no-travel work; allocate minimal headcount to fit within window.
+            needed = max(1, int(math.ceil(extra_days / float(window))))
+            base = balanced_allocate(extra_days, needed)
+            for i, d in enumerate(base, start=1):
+                loads.append(int(d))
+                travel_flags.append(False)
+                assignments.append(Assignment(role, "Shared (no travel)", i, int(d), int(d) * day_rate))
+            return
 
-        series = QHorizontalStackedBarSeries()
+        add_by_person = [0] * len(loads)
+        remaining = int(extra_days)
 
-        set_tech_on = QBarSet("Tech")
-        set_tech_tr = QBarSet("Tech travel")
-        set_eng_on = QBarSet("Eng")
-        set_eng_tr = QBarSet("Eng travel")
-
-        set_tech_on.setColor(tech_color)
-        set_tech_tr.setColor(tech_travel)
-        set_eng_on.setColor(eng_color)
-        set_eng_tr.setColor(eng_travel)
-
-        n = len(labels)
-        # Build arrays aligned to labels: first tech people then engineer people
-        for i in range(n):
-            is_tech = labels[i].startswith("T")
-            if is_tech:
-                v = tech_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (tech.travel_required_by_person and tech.travel_required_by_person[i]) else 0.0)
-                set_eng_on.append(0.0)
-                set_eng_tr.append(0.0)
+        while remaining > 0:
+            # Find least-loaded person
+            i_min = min(range(len(loads)), key=lambda i: loads[i])
+            if loads[i_min] < window:
+                cap = window - loads[i_min]
+                add = min(cap, remaining)
+                loads[i_min] += add
+                add_by_person[i_min] += add
+                remaining -= add
             else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(0.0)
-                set_tech_tr.append(0.0)
-                set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (eng.travel_required_by_person and eng.travel_required_by_person[i]) else 0.0)
+                # Everyone is at cap -> need to add a new person; per your nuance, this triggers travel
+                loads.append(0)
+                travel_flags.append(True)
+                add_by_person.append(0)
 
-        series.append(set_tech_on)
-        series.append(set_tech_tr)
-        series.append(set_eng_on)
-        series.append(set_eng_tr)
+        # Create shared assignment rows only for added days
+        for idx, add in enumerate(add_by_person, start=1):
+            if add > 0:
+                assignments.append(Assignment(role, "Shared (no travel)", idx, int(add), float(add) * day_rate))
 
-        self.chart.addSeries(series)
+    spread_days("Technician", nontravel_tech_days, tech_loads, tech_travel_flags, tech_rate)
+    spread_days("Engineer", nontravel_eng_days, eng_loads, eng_travel_flags, eng_rate)
 
-        axis_y = QBarCategoryAxis()
-        axis_y.append(labels)
+    # Build RoleTotals
+    tech_travel_days = [TRAVEL_DAYS_PER_PERSON if t else 0 for t in tech_travel_flags]
+    eng_travel_days = [TRAVEL_DAYS_PER_PERSON if t else 0 for t in eng_travel_flags]
 
-        totals = []
-        for lab in labels:
-            if lab.startswith("T"):
-                idx = int(lab[1:]) - 1
-                v = tech_vals[idx]
-                extra = TRAVEL_DAYS_PER_PERSON if (tech.travel_required_by_person and idx < len(tech.travel_required_by_person) and tech.travel_required_by_person[idx]) else 0
-            else:
-                idx = int(lab[1:]) - 1
-                v = eng_vals[idx]
-                extra = TRAVEL_DAYS_PER_PERSON if (eng.travel_required_by_person and idx < len(eng.travel_required_by_person) and eng.travel_required_by_person[idx]) else 0
-            totals.append(v + extra)
-        max_v = max(totals) if totals else 1
+    tech_role = RoleTotals(
+        headcount=len(tech_loads),
+        total_onsite_days=int(sum(tech_loads)),
+        onsite_days_by_person=[int(x) for x in tech_loads],
+        travel_days_by_person=[int(x) for x in tech_travel_days],
+        day_rate=tech_rate,
+        labor_cost=float(sum(tech_loads)) * tech_rate,
+    )
+    eng_role = RoleTotals(
+        headcount=len(eng_loads),
+        total_onsite_days=int(sum(eng_loads)),
+        onsite_days_by_person=[int(x) for x in eng_loads],
+        travel_days_by_person=[int(x) for x in eng_travel_days],
+        day_rate=eng_rate,
+        labor_cost=float(sum(eng_loads)) * eng_rate,
+    )
 
-        axis_x = QValueAxis()
-        axis_x.setRange(0, max(1, int(max_v)))
-        axis_x.setLabelFormat("%d")
-        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
+    # ---- Expenses
+    # Only travelers generate travel expenses
+    traveler_count = int(sum(1 for t in tech_travel_flags if t) + sum(1 for t in eng_travel_flags if t))
+    trip_days = 0
+    hotel_nights = 0
 
-        for ax in list(self.chart.axes()):
-            self.chart.removeAxis(ax)
+    for onsite, tr in zip(tech_loads, tech_travel_days):
+        if tr:
+            td = int(onsite + tr)
+            trip_days += td
+            hotel_nights += max(td - 1, 0)
+    for onsite, tr in zip(eng_loads, eng_travel_days):
+        if tr:
+            td = int(onsite + tr)
+            trip_days += td
+            hotel_nights += max(td - 1, 0)
 
-        self.chart.addAxis(axis_y, Qt.AlignLeft)
-        self.chart.addAxis(axis_x, Qt.AlignBottom)
-        series.attachAxis(axis_y)
-        series.attachAxis(axis_x)
+    exp_lines: List[ExpenseLine] = []
+    exp_total = 0.0
+    expenses = self.data.expenses.copy()
+    if "Baggage" in expenses:
+        expenses["Baggage"]["rate"] = 150.0
 
-        # Labels/legend polish
-        try:
-            series.setLabelsVisible(True)
-            series.setLabelsPosition(series.LabelsInsideEnd)
-            series.setLabelsFormat("@value")
-        except Exception:
-            pass
+    for name, cfg in expenses.items():
+        rate = float(cfg.get("rate", 0.0))
+        note = str(cfg.get("note", "")).strip().lower()
 
-        self.chart.legend().setVisible(True)
-        self.chart.legend().setAlignment(Qt.AlignBottom)
+        units = 0
+        if traveler_count == 0:
+            units = 0
+        elif "air" in name.lower() or "airfare" in name.lower():
+            units = traveler_count
+        elif "hotel" in name.lower() or "night" in note:
+            units = hotel_nights
+        elif "per person" in note and ("day" in note or "daily" in note):
+            units = trip_days
+        elif "day" in note or "daily" in note:
+            units = trip_days
+        else:
+            units = trip_days
+
+        line_total = units * rate
+        exp_total += line_total
+        exp_lines.append(ExpenseLine(name, units, rate, line_total))
+
+    # meta payload for UI + printing
+    meta: TDict[str, object] = {
+        "machine_rows": machine_rows,
+        "assignments": assignments,
+        "max_model_duration": max_model_duration,
+        "exp_total": exp_total,
+    }
+
+    return tech_role, eng_role, exp_lines, meta
+
+def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
+    """Horizontal stacked bar chart of onsite + travel days by person."""
+    labels: List[str] = []
+    onsite_vals: List[int] = []
+    travel_vals: List[int] = []
+    colors: List[QColor] = []
+    travel_colors: List[QColor] = []
+
+    tech_color = QColor("#C8102E")  # Pearson red
+    eng_color = QColor("#3A3A3A")   # charcoal gray
+    tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
+    eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+
+    for i, d in enumerate(tech.onsite_days_by_person, start=1):
+        labels.append(f"T{i}")
+        onsite_vals.append(int(d))
+        travel_vals.append(int(tech.travel_days_by_person[i-1]) if i-1 < len(tech.travel_days_by_person) else 0)
+        colors.append(tech_color)
+        travel_colors.append(tech_travel)
+
+    for i, d in enumerate(eng.onsite_days_by_person, start=1):
+        labels.append(f"E{i}")
+        onsite_vals.append(int(d))
+        travel_vals.append(int(eng.travel_days_by_person[i-1]) if i-1 < len(eng.travel_days_by_person) else 0)
+        colors.append(eng_color)
+        travel_colors.append(eng_travel)
+
+    self.chart.removeAllSeries()
+    self.chart.setTitle("Workload (days)")
+    self.chart.setBackgroundRoundness(8)
+    self.chart.setAnimationOptions(QChart.SeriesAnimations)
+
+    if not labels:
+        return
+
+    series = QHorizontalStackedBarSeries()
+
+    set_onsite = QBarSet("Onsite")
+    set_travel = QBarSet("Travel")
+
+    # We want different colors per bar, so we build two series (tech + eng) overlay via zeros.
+    tech_on = QBarSet("Tech onsite"); tech_on.setColor(tech_color)
+    tech_tr = QBarSet("Tech travel"); tech_tr.setColor(tech_travel)
+    eng_on = QBarSet("Eng onsite"); eng_on.setColor(eng_color)
+    eng_tr = QBarSet("Eng travel"); eng_tr.setColor(eng_travel)
+
+    for lab, on, tr in zip(labels, onsite_vals, travel_vals):
+        if lab.startswith("T"):
+            tech_on.append(float(on))
+            tech_tr.append(float(tr))
+            eng_on.append(0.0)
+            eng_tr.append(0.0)
+        else:
+            tech_on.append(0.0)
+            tech_tr.append(0.0)
+            eng_on.append(float(on))
+            eng_tr.append(float(tr))
+
+    series.append(tech_on)
+    series.append(tech_tr)
+    series.append(eng_on)
+    series.append(eng_tr)
+
+    self.chart.addSeries(series)
+
+    axis_y = QBarCategoryAxis()
+    axis_y.append(labels)
+    self.chart.setAxisY(axis_y, series)
+
+    axis_x = QValueAxis()
+    axis_x.setTitleText("Days")
+    axis_x.setLabelFormat("%d")
+    self.chart.setAxisX(axis_x, series)
+
+    self.chart.legend().setVisible(True)
+    self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
         if len(self.lines) == 0:
@@ -1468,89 +1434,9 @@ class MainWindow(QMainWindow):
         f.setPointSizeF(pt)
         self.setFont(f)
 
-    def _apply_responsive_layout(self):
-        """Wide: fixed left + scrollable right. Narrow: single stack + whole-window scroll."""
-        try:
-            w = self.width()
-            narrow = w < 1450  # laptops / small screens
-
-            if narrow and self._layout_mode != "narrow":
-                self._layout_mode = "narrow"
-                self.central_stack.setCurrentWidget(self.page_narrow)
-
-                # Move widgets into single stack
-                # Take right panel out of the wide scroll area
-                try:
-                    if self.right_scroll.widget() is not None:
-                        self.right_scroll.takeWidget()
-                except Exception:
-                    pass
-
-                # Detach from splitter and add to narrow layout
-                for wid in (self.left_panel, self.right_wrap):
-                    try:
-                        wid.setParent(None)
-                    except Exception:
-                        pass
-
-                # Ensure order: left first, then right
-                if self.narrow_layout.indexOf(self.left_panel) == -1:
-                    self.narrow_layout.insertWidget(0, self.left_panel)
-                if self.narrow_layout.indexOf(self.right_wrap) == -1:
-                    self.narrow_layout.addWidget(self.right_wrap)
-
-                # Chart should shrink a bit in narrow mode
-                if hasattr(self, "chart_view"):
-                    self.chart_view.setMinimumHeight(220)
-                    self.chart_view.setMaximumHeight(280)
-
-            elif (not narrow) and self._layout_mode != "wide":
-                self._layout_mode = "wide"
-                self.central_stack.setCurrentWidget(self.page_wide)
-
-                # Remove from narrow stack
-                try:
-                    self.narrow_layout.removeWidget(self.left_panel)
-                    self.narrow_layout.removeWidget(self.right_wrap)
-                except Exception:
-                    pass
-                try:
-                    self.left_panel.setParent(None)
-                    self.right_wrap.setParent(None)
-                except Exception:
-                    pass
-
-                # Restore right scroll widget
-                try:
-                    self.right_scroll.setWidget(self.right_wrap)
-                except Exception:
-                    pass
-
-                # Ensure splitter has left and right scroll in correct order
-                # (Splitter may be empty after reparenting)
-                if self.splitter.indexOf(self.left_panel) == -1:
-                    self.splitter.insertWidget(0, self.left_panel)
-                if self.splitter.indexOf(self.right_scroll) == -1:
-                    self.splitter.insertWidget(1, self.right_scroll)
-                self.splitter.setOrientation(Qt.Horizontal)
-                self.splitter.setStretchFactor(0, 1)
-                self.splitter.setStretchFactor(1, 2)
-
-                if hasattr(self, "chart_view"):
-                    self.chart_view.setMinimumHeight(300)
-                    self.chart_view.setMaximumHeight(16777215)
-
-            # Help prevent horizontal scrolling due to tables on small screens
-            for tbl in (self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp):
-                if tbl is not None:
-                    tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        except Exception:
-            pass
-
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._apply_scale()
-        self._apply_responsive_layout()
 
     def closeEvent(self, event):
 
@@ -1560,7 +1446,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.showMaximized()
+    w.show()
     sys.exit(app.exec())
 
 
