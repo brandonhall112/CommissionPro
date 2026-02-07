@@ -1278,18 +1278,18 @@ class MainWindow(QMainWindow):
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
             .logo {{ text-align:right; }}
-            .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
+            .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
             .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
-            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
+            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            h3 {{ color: #4B4F54; margin: 18px 0 8px 0; }}
+            h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
             .muted {{ color: #6D6E71; }}
-            .total {{ font-size: 16pt; font-weight: 900; color: #4B4F54; }}
+            .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
             <div class="topbar">
                 <div>
