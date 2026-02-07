@@ -1281,7 +1281,7 @@ class MainWindow(QMainWindow):
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
