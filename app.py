@@ -1456,7 +1456,7 @@ class MainWindow(QMainWindow):
             # Still stacked; keep heights updated as content changes
             self._update_right_scroll_height_if_stacked()
             try:
-                if hasattr(self, \"scroll\"):
+                if hasattr(self, "scroll"):
                     self.scroll.setMinimumHeight(320)
             except Exception:
                 pass
