@@ -444,37 +444,34 @@ class ExcelData:
         raise KeyError(f"Rate not found for '{key}'")
 
 
-    def get(self, *args):
-        """Compatibility helper.
+        def get(self, section_or_key, key=None, default=None, *rest):
+            """Safe getter used by various app versions.
 
-        Supports:
-          - get(section, key)
-          - get(section, key, default)
-          - get(key)  (tries common rate keys)
-        """
-        if len(args) == 1:
-            key = args[0]
-            # try common places
-            for sec in ("Service Rates", "Rates", "rates"):
-                if sec in self.rates and key in self.rates[sec]:
-                    return self.rates[sec][key]
-            # flat scan
-            for sec, d in self.rates.items():
-                if key in d:
-                    return d[key]
-            raise KeyError(key)
-        elif len(args) == 2:
-            section, key = args
-            if section in self.rates:
-                return self.rates[section].get(key)
-            raise KeyError(section)
-        elif len(args) == 3:
-            section, key, default = args
-            if section in self.rates:
-                return self.rates[section].get(key, default)
+            Supports calls like:
+              - get(section, key) -> value or None
+              - get(section, key, default) -> value or default
+              - get(key) -> tries common rate sections for a key
+            Extra positional args are ignored (treated as default if provided).
+            """
+            # If caller passed more than 3 positional args, treat the 3rd as default and ignore the rest
+            if rest:
+                # some legacy code may pass (section, key, field, default); keep the last arg as default
+                default = rest[-1] if default is None else default
+
+            # 1-arg form: get(key)
+            if key is None:
+                k = section_or_key
+                for sec in ("Service Rates", "Rates", "rates"):
+                    if sec in self.rates and k in self.rates[sec]:
+                        return self.rates[sec][k]
+                return default
+
+            # 2/3-arg form: get(section, key[, default])
+            sec = section_or_key
+            if sec in self.rates and key in self.rates[sec]:
+                return self.rates[sec][key]
             return default
-        else:
-            raise TypeError("ExcelData.get() expects 1 to 3 arguments")
+
 
 class MachineLine(QFrame):
     def __init__(self, models: List[str], training_applicable_map: Dict[str, bool], on_change, on_delete):
