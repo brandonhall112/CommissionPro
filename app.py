@@ -1,6 +1,40 @@
-import sys, math
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
+import sys
+import math
+
+from PySide6.QtCore import Qt, QSize, QUrl
+from PySide6.QtGui import (
+    QColor,
+    QBrush,
+    QFont,
+    QDesktopServices,
+    QPainter,
+    QTextDocument,
+    QPageSize,
+)
+from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
+from PySide6.QtCharts import QChart, QChartView
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QFrame,
+    QLabel,
+    QComboBox,
+    QSpinBox,
+    QCheckBox,
+    QPushButton,
+    QHBoxLayout,
+    QVBoxLayout,
+    QSplitter,
+    QScrollArea,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
+    QAbstractItemView,
+    QMessageBox,
+    QFileDialog,
+)
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
