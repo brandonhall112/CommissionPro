@@ -1,4 +1,4 @@
-import sys, math
+import sys, math, re
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtCore import QUrl
 from dataclasses import dataclass
