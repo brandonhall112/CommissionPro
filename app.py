@@ -39,6 +39,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
 
+APP_TITLE = "Pearson Commissioning Pro"
+
+
 
 def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
     """Find the default Excel workbook inside assets without prompting the user unless missing."""
