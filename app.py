@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
 
 APP_TITLE = "Pearson Commissioning Pro"
+DEFAULT_EXCEL_NAME = "Tech days and quote rates.xlsx"
 
 
 
@@ -544,7 +545,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(APP_TITLE)
         self.resize(1920, 1200)
 
-        self.data = ExcelData(DEFAULT_EXCEL)
+        default_path = resolve_excel_path(DEFAULT_EXCEL_NAME)
+        if not default_path or not default_path.exists():
+            # Fall back to prompting the user (e.g., if assets were not bundled correctly).
+            fp, _ = QFileDialog.getOpenFileName(self, "Select Excel file", "", "Excel (*.xlsx)")
+            if not fp:
+                raise FileNotFoundError("Excel workbook not found. Please provide Tech days and quote rates.xlsx.")
+            default_path = Path(fp)
+        self.data = ExcelData(default_path)
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.qual = QualificationMatrix.try_load()
