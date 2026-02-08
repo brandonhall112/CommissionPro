@@ -968,11 +968,16 @@ class MainWindow(QMainWindow):
         if window <= 0:
             window = 1
 
-        tech_day_rate = float(self.spin_tech_rate.value())
-        eng_day_rate = float(self.spin_eng_rate.value())
+        # Rates come from the bundled Excel "Service Rates" tab.
+        # Older drafts used editable spin-box controls (spin_tech_rate/spin_eng_rate
+        # and travel-in/out). Those controls are not part of the current UI, so
+        # we read rates directly from the workbook and default travel-in/out to 1 day
+        # each when travel is required.
+        tech_day_rate = float(self.data.get_rate("Tech. Regular Time", 155.0))
+        eng_day_rate = float(self.data.get_rate("Eng. Regular Time", 206.0))
 
-        travel_in = int(self.spin_travel_in.value())
-        travel_out = int(self.spin_travel_out.value())
+        travel_in = 1
+        travel_out = 1
 
         qual = getattr(self, "qual", None)
 
