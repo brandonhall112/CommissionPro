@@ -1,34 +1,9 @@
 import sys, math
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QUrl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Dict as TDict
-
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
-
-def resolve_assets_dir() -> Path:
-    """Return the assets directory for dev + PyInstaller (onefile/onedir).
-
-    onefile: extracted to sys._MEIPASS/assets
-    onedir: typically <exe_dir>/_internal/assets (new PyInstaller layout) or <exe_dir>/assets
-    dev:    <repo>/assets
-    """
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        return (Path(meipass).resolve() / "assets").resolve()
-
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        for p in (exe_dir / "_internal" / "assets", exe_dir / "assets"):
-            try:
-                if p.exists():
-                    return p.resolve()
-            except Exception:
-                pass
-        # fallback (still return a sensible default path)
-        return (exe_dir / "_internal" / "assets").resolve()
-
-    return (Path(__file__).resolve().parent / "assets").resolve()
 
 
 def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") -> Path | None:
@@ -62,10 +37,151 @@ def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") ->
     return None
 
 
-# Resolved paths (safe for both dev + PyInstaller)
-ASSETS_DIR = resolve_assets_dir()
-DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
-LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
+
+
+DEFAULT_SKILLS_MATRIX = "Machine Qualifications for PCP Quoting.xlsx"
+
+def resolve_skills_matrix_path(expected_name: str = DEFAULT_SKILLS_MATRIX) -> Path:
+    """Resolve the skills/qualifications matrix path in dev and in a bundled EXE."""
+    return resolve_assets_dir() / expected_name
+
+
+class SkillsMatrix:
+    """Loader for the 'Machine Qualifications for PCP Quoting.xlsx' matrix.
+
+    Expected columns:
+      - Resource Type (Technician / Engineer)
+      - Resource (e.g., Tech 1, Eng 1)
+      - One column per model with values like T1/T2/T3 (blank allowed)
+    """
+
+    _LEVEL_RE = re.compile(r"\bT\s*(\d+)\b", re.IGNORECASE)
+
+    def __init__(self, levels_by_type: dict[str, dict[str, dict[str, int]]], models: set[str]):
+        self.levels_by_type = levels_by_type
+        self.models = models
+
+    @staticmethod
+    def _parse_level(v) -> int:
+        if v is None:
+            return 0
+        s = str(v).strip()
+        if not s:
+            return 0
+        m = SkillsMatrix._LEVEL_RE.search(s)
+        if not m:
+            return 0
+        try:
+            return int(m.group(1))
+        except Exception:
+            return 0
+
+    @classmethod
+    def load(cls, path: Path) -> "SkillsMatrix":
+        from openpyxl import load_workbook
+
+        wb = load_workbook(path, data_only=True)
+        ws = wb.active
+
+        header = []
+        for c in ws[1]:
+            header.append(str(c.value).strip() if c.value is not None else "")
+
+        if "Resource Type" not in header or "Resource" not in header:
+            raise ValueError("Skills matrix must have 'Resource Type' and 'Resource' as the first two columns in row 1.")
+
+        idx_type = header.index("Resource Type")
+        idx_res = header.index("Resource")
+
+        model_cols: list[tuple[int, str]] = []
+        for i, name in enumerate(header):
+            if i in (idx_type, idx_res):
+                continue
+            if name:
+                model_cols.append((i, name))
+
+        models = {name for _, name in model_cols}
+        levels_by_type: dict[str, dict[str, dict[str, int]]] = {}
+
+        for r in range(2, ws.max_row + 1):
+            rtype = ws.cell(row=r, column=idx_type + 1).value
+            rname = ws.cell(row=r, column=idx_res + 1).value
+            if rtype is None or str(rtype).strip() == "":
+                continue
+            if rname is None or str(rname).strip() == "":
+                continue
+            rtype_s = str(rtype).strip()
+            rname_s = str(rname).strip()
+
+            by_res = levels_by_type.setdefault(rtype_s, {})
+            by_model = by_res.setdefault(rname_s, {})
+
+            for ci, model in model_cols:
+                v = ws.cell(row=r, column=ci + 1).value
+                lvl = cls._parse_level(v)
+                if lvl:
+                    by_model[model] = lvl
+
+        return cls(levels_by_type, models)
+
+    def is_model_present(self, model: str) -> bool:
+        return model in self.models
+
+    def qualifies_group(self, models: list[str], resource_type: str = "Technician") -> bool:
+        """Crew qualification rule:
+        - >= 2 resources with >=T3 across ALL models
+        - >= 1 additional resource with >=T2 across ALL models (T3 counts as T2)
+        """
+        if not models:
+            return False
+        if resource_type not in self.levels_by_type:
+            return False
+
+        models = [m for m in models if self.is_model_present(m)]
+        if len(models) < 2:
+            return False
+
+        resources = self.levels_by_type[resource_type]
+        t3 = 0
+        t2 = 0
+
+        for _, by_model in resources.items():
+            min_level = 999
+            for m in models:
+                lvl = int(by_model.get(m, 0))
+                min_level = min(min_level, lvl)
+            if min_level >= 3:
+                t3 += 1
+                t2 += 1
+            elif min_level >= 2:
+                t2 += 1
+
+        return (t3 >= 2) and (t2 >= 3)
+
+
+def resolve_assets_dir() -> Path:
+    """Return the assets directory for dev + PyInstaller (onefile/onedir).
+
+    onefile: extracted to sys._MEIPASS/assets
+    onedir: typically <exe_dir>/_internal/assets (new PyInstaller layout) or <exe_dir>/assets
+    dev:   <repo>/assets
+    """
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        return (Path(meipass).resolve() / "assets").resolve()
+
+    if getattr(sys, "frozen", False):
+        exe_dir = Path(sys.executable).resolve().parent
+        for p in (exe_dir / "_internal" / "assets", exe_dir / "assets"):
+            try:
+                if p.exists():
+                    return p.resolve()
+            except Exception:
+                pass
+        return (exe_dir / "_internal" / "assets").resolve()
+
+    return (Path(__file__).resolve().parent / "assets").resolve()
+
 
 import numpy as np
 import openpyxl
@@ -96,6 +212,9 @@ TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
 OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
+ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
+LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
 
 
 def ceil_int(x: float) -> int:
@@ -500,21 +619,21 @@ class MainWindow(QMainWindow):
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
+        self.skills_matrix = None
+        try:
+            sm_path = resolve_skills_matrix_path()
+            if sm_path.exists():
+                self.skills_matrix = SkillsMatrix.load(sm_path)
+        except Exception:
+            self.skills_matrix = None
+
         self.lines: List[MachineLine] = []
 
-        central_container = QWidget()
-        root = QVBoxLayout(central_container)
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
-        # Outer scroll area enables whole-window scrolling in stacked (single-column) mode
-        self.outer_scroll = QScrollArea()
-        self.outer_scroll.setObjectName("outerScroll")
-        self.outer_scroll.setWidgetResizable(True)
-        self.outer_scroll.setFrameShape(QFrame.NoFrame)
-        self.outer_scroll.setWidget(central_container)
-        self.setCentralWidget(self.outer_scroll)
-
 
         header = QFrame()
         header.setObjectName("header")
@@ -537,7 +656,6 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
-        self.splitter = splitter
         root.addWidget(splitter, 1)
 
         # LEFT
@@ -587,7 +705,7 @@ class MainWindow(QMainWindow):
         left_l.addWidget(self.scroll, 1)
 
         btn_add = QPushButton("+  Add Machine")
-        btn_add.setObjectName("addMachine")
+        btn_add.setObjectName("primary")
         btn_add.clicked.connect(self.add_line)
         left_l.addWidget(btn_add)
 
@@ -600,17 +718,14 @@ class MainWindow(QMainWindow):
 
         # RIGHT (scrollable)
         right_wrap = QWidget()
-        self.right_wrap = right_wrap
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
-        self.right_scroll = right_scroll
         right_layout.addWidget(right_scroll)
 
         right = QWidget()
-        self.right_content = right
         right_scroll.setWidget(right)
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(14, 14, 14, 14)
@@ -699,11 +814,6 @@ class MainWindow(QMainWindow):
         self._base_font_pt = float(self.font().pointSizeF() or 10.0)
         self._apply_scale()
 
-        # Responsive layout: two-column w/ right scroll on large screens; single stacked w/ full-window scroll on small screens
-        self._stack_threshold = 1280
-        self._is_stacked = False
-        self._apply_responsive_layout()
-
     def make_table(self, headers: List[str]) -> QTableWidget:
         tbl = QTableWidget(0, len(headers))
         tbl.setHorizontalHeaderLabels(headers)
@@ -736,12 +846,6 @@ class MainWindow(QMainWindow):
             background: __GOLD__; border: 0px; color: #0B1B2A;
             padding: 10px 12px; border-radius: 10px; font-weight: 800;
         }
-        QPushButton#addMachine {
-            background: #bebebe; border: 0px; color: #0B1B2A;
-            padding: 10px 12px; border-radius: 10px; font-weight: 800;
-        }
-        QPushButton#addMachine:hover { background: #D6D9DD; }
-        QPushButton#addMachine:pressed { background: #CBD5E1; }
         QPushButton {
             padding: 8px 10px; border-radius: 10px;
             border: 1px solid #D6D9DD; background: #F8FAFC;
@@ -764,7 +868,7 @@ class MainWindow(QMainWindow):
             selection-background-color: #DBEAFE;
         }
         QHeaderView::section {
-            background: #343551;
+            background: __RED__;
             color: white;
             padding: 8px;
             border: 0px;
@@ -875,59 +979,211 @@ class MainWindow(QMainWindow):
         tech_all: List[int] = []
         eng_all: List[int] = []
 
+        
+        # ---- Crew allocation with optional skills-matrix grouping ----
+        tech_only: list[tuple[MachineSelection, ModelInfo]] = []
+        rpc: list[tuple[MachineSelection, ModelInfo]] = []
+        eng_required_other: list[tuple[MachineSelection, ModelInfo]] = []
+
         for s in selections:
-            mi = self.data.models[s.model]
-            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
-            training_days = base_training if s.training_required else 0
+            if not s.model:
+                continue
+            mi = self.data.models.get(s.model)
+            if not mi:
+                continue
+            if s.model.strip().upper().startswith("RPC-"):
+                rpc.append((s, mi))
+            elif mi.eng_days_per_machine and mi.eng_days_per_machine > 0:
+                eng_required_other.append((s, mi))
+            else:
+                tech_only.append((s, mi))
 
-            tech_install_total = mi.tech_install_days_per_machine * s.qty
-            tech_total = tech_install_total + training_days
-            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
-            eng_training_days = eng_training_potential if s.training_required else 0
-            eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
+        def _training_days(mi: ModelInfo, s: MachineSelection) -> tuple[int, int, bool, bool]:
+            # (tech_training_days, eng_training_days, training_potential, eng_training_potential)
+            if not mi.training_applicable:
+                return 0, 0, False, False
+            base_td = ceil_int(int(s.qty) / TRAINING_MACHINES_PER_DAY) if TRAINING_MACHINES_PER_DAY else 0
+            if not s.training_required:
+                return 0, 0, True, True
+            eng_td = base_td if (mi.eng_days_per_machine and mi.eng_days_per_machine > 0) else 0
+            return base_td, eng_td, True, True
 
-            single_training = 1 if (s.training_required and mi.training_applicable) else 0
-            if mi.tech_install_days_per_machine + single_training > window:
-                raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
-            if mi.eng_days_per_machine > 0:
-                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
-                if mi.eng_days_per_machine + single_eng_training > window:
-                    raise ValueError(
-                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
-                    )
+        def _binpack(chunks: list[int], cap: int) -> list[int]:
+            bins: list[int] = []
+            for d in sorted(chunks, reverse=True):
+                placed = False
+                for i in sorted(range(len(bins)), key=lambda j: bins[j], reverse=True):
+                    if bins[i] + d <= cap:
+                        bins[i] += d
+                        placed = True
+                        break
+                if not placed:
+                    bins.append(d)
+            return bins
 
-            tech_headcount = 0
-            eng_headcount = 0
+        def _allocate_group(items: list[tuple[MachineSelection, ModelInfo]]) -> tuple[list[int], list[int]]:
+            cap = max(1, int(window_days))
+            tech_chunks: list[int] = []
+            eng_chunks: list[int] = []
+            for s, mi in items:
+                qty = int(s.qty or 0)
+                if qty <= 0:
+                    continue
+                ttd, etd, tp, etp = _training_days(mi, s)
 
-            if tech_total > 0:
-                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
-                tech_headcount = len(tech_alloc)
+                if mi.tech_days_per_machine > 0:
+                    tech_chunks.extend([mi.tech_days_per_machine] * qty)
+                if ttd > 0:
+                    tech_chunks.extend([1] * int(ttd))
+
+                if mi.eng_days_per_machine and mi.eng_days_per_machine > 0:
+                    eng_chunks.extend([mi.eng_days_per_machine] * qty)
+                    if etd > 0:
+                        eng_chunks.extend([1] * int(etd))
+
+            return _binpack(tech_chunks, cap), _binpack(eng_chunks, cap)
+
+        # Decide grouping for tech-only models based on matrix
+        groupable_models: list[str] = []
+        if self.skills_matrix:
+            for s, mi in tech_only:
+                if self.skills_matrix.is_model_present(s.model):
+                    groupable_models.append(s.model)
+
+        group_tech_only = bool(self.skills_matrix) and self.skills_matrix.qualifies_group(groupable_models)
+
+        # 1) Tech-only
+        if tech_only:
+            if group_tech_only and len(groupable_models) >= 2:
+                tech_alloc, eng_alloc = _allocate_group(tech_only)
+
                 tech_all.extend(tech_alloc)
-                for i, d in enumerate(tech_alloc, 1):
-                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
-
-            if eng_total > 0:
-                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
-                eng_headcount = len(eng_alloc)
                 eng_all.extend(eng_alloc)
-                for i, d in enumerate(eng_alloc, 1):
-                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
 
-            machine_rows.append({
-                "model": s.model,
-                "qty": s.qty,
-                "training_days": training_days,
-                "training_potential": base_training,
-                "training_required": s.training_required,
-                "training_applicable": bool(mi.training_applicable),
-                "eng_training_days": eng_training_days,
-                "eng_training_potential": eng_training_potential,
-                "tech_total": tech_total,
-                "eng_total": eng_total,
-                "tech_headcount": tech_headcount,
-                "eng_headcount": eng_headcount
-            })
+                for pi, days in enumerate(tech_alloc, start=1):
+                    assignments.append(Assignment(model="Tech Crew (Grouped)", role="Technician",
+                                                  person_num=pi, onsite_days=days,
+                                                  rate_per_day=tech_day_rate, cost=days * tech_day_rate))
+                for pi, days in enumerate(eng_alloc, start=1):
+                    assignments.append(Assignment(model="Tech Crew (Grouped)", role="Engineer",
+                                                  person_num=pi, onsite_days=days,
+                                                  rate_per_day=eng_day_rate, cost=days * eng_day_rate))
 
+                # machine breakdown rows keep per-model totals, but show shared headcount
+                for s, mi in tech_only:
+                    qty = int(s.qty or 0)
+                    if qty <= 0:
+                        continue
+                    ttd, etd, tp, etp = _training_days(mi, s)
+                    tech_total = qty * mi.tech_days_per_machine + ttd
+                    eng_total = qty * (mi.eng_days_per_machine or 0) + etd
+
+                    machine_rows.append(MachineRow(
+                        model=s.model, qty=qty,
+                        tech_days=tech_total, eng_days=eng_total,
+                        training_required=s.training_required and mi.training_applicable,
+                        training_potential=mi.training_applicable,
+                        tech_headcount=len(tech_alloc),
+                        eng_headcount=len(eng_alloc),
+                    ))
+            else:
+                for s, mi in tech_only:
+                    qty = int(s.qty or 0)
+                    if qty <= 0:
+                        continue
+                    ttd, etd, tp, etp = _training_days(mi, s)
+                    tech_total = qty * mi.tech_days_per_machine + ttd
+                    eng_total = qty * (mi.eng_days_per_machine or 0) + etd
+
+                    tech_alloc = chunk_allocate_by_machine(tech_total, max_onsite=window_days)
+                    eng_alloc = chunk_allocate_by_machine(eng_total, max_onsite=window_days) if eng_total else []
+
+                    tech_all.extend(tech_alloc)
+                    eng_all.extend(eng_alloc)
+
+                    for pi, days in enumerate(tech_alloc, start=1):
+                        assignments.append(Assignment(model=s.model, role="Technician", person_num=pi,
+                                                      onsite_days=days, rate_per_day=tech_day_rate,
+                                                      cost=days * tech_day_rate))
+                    for pi, days in enumerate(eng_alloc, start=1):
+                        assignments.append(Assignment(model=s.model, role="Engineer", person_num=pi,
+                                                      onsite_days=days, rate_per_day=eng_day_rate,
+                                                      cost=days * eng_day_rate))
+
+                    machine_rows.append(MachineRow(
+                        model=s.model, qty=qty,
+                        tech_days=tech_total, eng_days=eng_total,
+                        training_required=s.training_required and mi.training_applicable,
+                        training_potential=mi.training_applicable,
+                        tech_headcount=len(tech_alloc),
+                        eng_headcount=len(eng_alloc),
+                    ))
+
+        # 2) RPC crew (RPC-C and RPC-DF share a single crew)
+        if rpc:
+            tech_alloc, eng_alloc = _allocate_group(rpc)
+
+            tech_all.extend(tech_alloc)
+            eng_all.extend(eng_alloc)
+
+            for pi, days in enumerate(tech_alloc, start=1):
+                assignments.append(Assignment(model="RPC Crew", role="Technician",
+                                              person_num=pi, onsite_days=days,
+                                              rate_per_day=tech_day_rate, cost=days * tech_day_rate))
+            for pi, days in enumerate(eng_alloc, start=1):
+                assignments.append(Assignment(model="RPC Crew", role="Engineer",
+                                              person_num=pi, onsite_days=days,
+                                              rate_per_day=eng_day_rate, cost=days * eng_day_rate))
+
+            for s, mi in rpc:
+                qty = int(s.qty or 0)
+                if qty <= 0:
+                    continue
+                ttd, etd, tp, etp = _training_days(mi, s)
+                tech_total = qty * mi.tech_days_per_machine + ttd
+                eng_total = qty * (mi.eng_days_per_machine or 0) + etd
+
+                machine_rows.append(MachineRow(
+                    model=s.model, qty=qty,
+                    tech_days=tech_total, eng_days=eng_total,
+                    training_required=s.training_required and mi.training_applicable,
+                    training_potential=mi.training_applicable,
+                    tech_headcount=len(tech_alloc),
+                    eng_headcount=len(eng_alloc),
+                ))
+
+        # 3) Engineer-required non-RPC (unchanged)
+        for s, mi in eng_required_other:
+            qty = int(s.qty or 0)
+            if qty <= 0:
+                continue
+            ttd, etd, tp, etp = _training_days(mi, s)
+            tech_total = qty * mi.tech_days_per_machine + ttd
+            eng_total = qty * (mi.eng_days_per_machine or 0) + etd
+
+            tech_alloc = chunk_allocate_by_machine(tech_total, max_onsite=window_days)
+            eng_alloc = chunk_allocate_by_machine(eng_total, max_onsite=window_days) if eng_total else []
+
+            tech_all.extend(tech_alloc)
+            eng_all.extend(eng_alloc)
+
+            for pi, days in enumerate(tech_alloc, start=1):
+                assignments.append(Assignment(model=s.model, role="Technician", person_num=pi,
+                                              onsite_days=days, rate_per_day=tech_day_rate,
+                                              cost=days * tech_day_rate))
+            for pi, days in enumerate(eng_alloc, start=1):
+                assignments.append(Assignment(model=s.model, role="Engineer", person_num=pi,
+                                              onsite_days=days, rate_per_day=eng_day_rate,
+                                              cost=days * eng_day_rate))
+
+            machine_rows.append(MachineRow(
+                model=s.model, qty=qty,
+                tech_days=tech_total, eng_days=eng_total,
+                training_required=s.training_required and mi.training_applicable,
+                training_potential=mi.training_applicable,
+                tech_headcount=len(tech_alloc),
+                eng_headcount=len(eng_alloc),
+            ))
         tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
         eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
 
@@ -1020,8 +1276,8 @@ class MainWindow(QMainWindow):
             return
 
         # Colors (match UI theme)
-        tech_color = QColor("#e04426")  # Tech bar
-        eng_color = QColor("#6790a0")   # Engineer bar
+        tech_color = QColor("#C8102E")  # Pearson red
+        eng_color = QColor("#3A3A3A")   # charcoal gray
         tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
         eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
 
@@ -1280,18 +1536,18 @@ class MainWindow(QMainWindow):
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
             .logo {{ text-align:right; }}
-            .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
+            .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
-            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
+            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
+            h3 {{ color: #4B4F54; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
             .muted {{ color: #6D6E71; }}
-            .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
+            .total {{ font-size: 16pt; font-weight: 900; color: #4B4F54; }}
         </style></head><body>
             <div class="topbar">
                 <div>
@@ -1385,84 +1641,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Print error", str(e))
             return
 
-    
-    def _update_right_scroll_height_if_stacked(self):
-        """When stacked, expand the right scroll area to its content so the OUTER scroll handles scrolling."""
-        if not getattr(self, "_is_stacked", False):
-            return
-        try:
-            if hasattr(self, "right_scroll") and hasattr(self, "right_content"):
-                h = int(self.right_content.sizeHint().height()) + 80
-                self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                self.right_scroll.setMinimumHeight(h)
-                self.right_scroll.setMaximumHeight(h)
-        except Exception:
-            pass
-
-    def _apply_responsive_layout(self):
-        """Large screens: 2 columns w/ right-side scroll. Small screens: single stacked w/ full-window scroll."""
-        if not hasattr(self, "splitter") or not hasattr(self, "outer_scroll") or not hasattr(self, "right_scroll"):
-            return
-
-        w = int(self.width())
-        stacked = w < getattr(self, "_stack_threshold", 1280)
-
-        if stacked and not getattr(self, "_is_stacked", False):
-            self._is_stacked = True
-            self.splitter.setOrientation(Qt.Vertical)
-            # Enable whole-window scrolling; disable inner right scrolling
-            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self._update_right_scroll_height_if_stacked()
-            # Give left pane enough room; right pane will follow under it
-            try:
-                self.splitter.setSizes([650, 1000])
-            except Exception:
-                pass
-
-            # In stacked (single-column) mode, make the machine configuration area taller so
-            # multiple machine lines are visible without feeling cramped.
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
-                    self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            except Exception:
-                pass
-
-        elif (not stacked) and getattr(self, "_is_stacked", False):
-            self._is_stacked = False
-            self.splitter.setOrientation(Qt.Horizontal)
-            # Disable whole-window scrolling; allow right column to scroll
-            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.right_scroll.setMinimumHeight(0)
-            self.right_scroll.setMaximumHeight(16777215)
-            self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            try:
-                self.splitter.setSizes([520, 1040])
-            except Exception:
-                pass
-
-            # Restore default sizing for wide (two-column) mode.
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(0)
-            except Exception:
-                pass
-
-        elif stacked:
-            # Still stacked; keep heights updated as content changes
-            self._update_right_scroll_height_if_stacked()
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
-            except Exception:
-                pass
-
     def _apply_scale(self):
         # Scale UI typography modestly with window size; keep within sensible bounds.
         w = max(self.width(), 1)
@@ -1477,8 +1655,8 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_responsive_layout()
         self._apply_scale()
+
     def closeEvent(self, event):
 
         event.accept()
@@ -1487,7 +1665,7 @@ class MainWindow(QMainWindow):
 def main():
     app = QApplication(sys.argv)
     w = MainWindow()
-    w.showMaximized()
+    w.show()
     sys.exit(app.exec())
 
 
