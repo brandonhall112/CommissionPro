@@ -35,6 +35,120 @@ def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") ->
         pass
 
     return None
+def resolve_qualifications_path() -> Path | None:
+    """Find the machine qualifications matrix workbook inside assets (if bundled)."""
+    assets = resolve_assets_dir()
+    # Prefer an exact-ish name if present
+    candidates = [
+        assets / "Machine Qualifications for PCP Quoting.xlsx",
+        assets / "Machine Qualifications.xlsx",
+        assets / "Qualifications.xlsx",
+    ]
+    for c in candidates:
+        try:
+            if c.exists():
+                return c.resolve()
+        except Exception:
+            pass
+
+    # Fuzzy match
+    try:
+        for f in assets.glob("*.xlsx"):
+            n = f.name.lower()
+            if "qualification" in n and "machine" in n:
+                return f.resolve()
+    except Exception:
+        pass
+    return None
+
+
+def _rating_to_level(v: str) -> int:
+    v = (v or "").strip().upper()
+    if v.startswith("T3"):
+        return 3
+    if v.startswith("T2"):
+        return 2
+    if v.startswith("T1"):
+        return 1
+    return 0
+
+
+def load_qualifications_matrix() -> tuple[dict[str, dict[str, int]], set[str]]:
+    """Load qualifications matrix: tech name rows x model columns with T1/T2/T3 ratings.
+
+    Returns (matrix, model_set). Empty if not found or not readable.
+    """
+    p = resolve_qualifications_path()
+    if not p:
+        return {}, set()
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(p, data_only=True)
+        ws = wb.active
+
+        # Expect headers in row 1: first column technician name; remaining columns model names
+        headers = []
+        for cell in ws[1]:
+            headers.append(str(cell.value).strip() if cell.value is not None else "")
+
+        if len(headers) < 2:
+            return {}, set()
+
+        model_headers = [h for h in headers[1:] if h]
+        model_set = set(model_headers)
+
+        matrix: dict[str, dict[str, int]] = {}
+        for r in range(2, ws.max_row + 1):
+            tech = ws.cell(row=r, column=1).value
+            if tech is None:
+                continue
+            tech_name = str(tech).strip()
+            if not tech_name:
+                continue
+            row_map: dict[str, int] = {}
+            for j, model in enumerate(model_headers, start=2):
+                val = ws.cell(row=r, column=j).value
+                lvl = _rating_to_level(str(val) if val is not None else "")
+                if lvl > 0:
+                    row_map[model] = lvl
+            matrix[tech_name] = row_map
+
+        return matrix, model_set
+    except Exception:
+        return {}, set()
+
+
+def can_share_crew(models: set[str], matrix: dict[str, dict[str, int]]) -> bool:
+    """Return True if there exists a crew that can cover *all* models per rule:
+    - at least 2 techs with T3 across all models
+    - and at least 1 additional tech with at least T2 across all models
+      (equivalently: at least 3 techs with min rating >=2 across all models).
+    """
+    if not models or not matrix:
+        return False
+
+    t3 = 0
+    ge2 = 0
+    for tech, ratings in matrix.items():
+        # min rating across required models
+        mins = []
+        ok = True
+        for m in models:
+            lvl = ratings.get(m, 0)
+            if lvl <= 0:
+                ok = False
+                break
+            mins.append(lvl)
+        if not ok:
+            continue
+        min_lvl = min(mins) if mins else 0
+        if min_lvl >= 3:
+            t3 += 1
+        if min_lvl >= 2:
+            ge2 += 1
+    return (t3 >= 2) and (ge2 >= 3)
+
+
 
 
 
@@ -70,7 +184,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
+    QStackedWidget,
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
@@ -178,6 +293,7 @@ class ModelInfo:
     tech_install_days_per_machine: int   # install-only (no training baked in)
     eng_days_per_machine: int
     training_applicable: bool = True
+    travel_required: bool = True
 
 
 @dataclass
@@ -194,6 +310,7 @@ class RoleTotals:
     onsite_days_by_person: List[int]
     day_rate: float
     labor_cost: float
+    travel_required_by_person: List[bool]
 
 
 @dataclass
@@ -497,22 +614,17 @@ class MainWindow(QMainWindow):
 
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
+
+        # Optional: qualifications matrix for crew grouping (Quote Pro expansion)
+        self.qual_matrix, self.qual_models = load_qualifications_matrix()
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.lines: List[MachineLine] = []
 
-        central_container = QWidget()
-        root = QVBoxLayout(central_container)
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-
-        # Outer scroll area enables whole-window scrolling in stacked (single-column) mode
-        self.outer_scroll = QScrollArea()
-        self.outer_scroll.setObjectName("outerScroll")
-        self.outer_scroll.setWidgetResizable(True)
-        self.outer_scroll.setFrameShape(QFrame.NoFrame)
-        self.outer_scroll.setWidget(central_container)
-        self.setCentralWidget(self.outer_scroll)
-
 
         header = QFrame()
         header.setObjectName("header")
@@ -533,14 +645,40 @@ class MainWindow(QMainWindow):
         h.addWidget(btn_open_bundled)
         root.addWidget(header)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setChildrenCollapsible(False)
-        self.splitter = splitter
-        root.addWidget(splitter, 1)
+                # Central area: wide mode (fixed left + scrollable right) and narrow mode (single stack + whole-window scroll)
+        self._layout_mode = None  # "wide" or "narrow"
+
+        self.central_stack = QStackedWidget()
+        root.addWidget(self.central_stack, 1)
+
+        # --- Wide page (no whole-window scroll; right column scrolls) ---
+        self.page_wide = QWidget()
+        self.central_stack.addWidget(self.page_wide)
+        wide_l = QVBoxLayout(self.page_wide)
+        wide_l.setContentsMargins(0, 0, 0, 0)
+        wide_l.setSpacing(0)
+
+        self.splitter = QSplitter(Qt.Horizontal)
+        self.splitter.setChildrenCollapsible(False)
+        splitter = self.splitter
+        wide_l.addWidget(splitter, 1)
+
+        # --- Narrow page (whole window scroll; single stack) ---
+        self.page_narrow = QScrollArea()
+        self.page_narrow.setWidgetResizable(True)
+        self.page_narrow.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.central_stack.addWidget(self.page_narrow)
+
+        self.narrow_container = QWidget()
+        self.page_narrow.setWidget(self.narrow_container)
+        self.narrow_layout = QVBoxLayout(self.narrow_container)
+        self.narrow_layout.setContentsMargins(0, 0, 0, 0)
+        self.narrow_layout.setSpacing(12)
 
         # LEFT
         left = QFrame()
         left.setObjectName("panel")
+        self.left_panel = left
         left_l = QVBoxLayout(left)
         left_l.setContentsMargins(14, 14, 14, 14)
         left_l.setSpacing(12)
@@ -585,7 +723,7 @@ class MainWindow(QMainWindow):
         left_l.addWidget(self.scroll, 1)
 
         btn_add = QPushButton("+  Add Machine")
-        btn_add.setObjectName("addMachine")
+        btn_add.setObjectName("primary")
         btn_add.clicked.connect(self.add_line)
         left_l.addWidget(btn_add)
 
@@ -594,22 +732,22 @@ class MainWindow(QMainWindow):
         note.setWordWrap(True)
         left_l.addWidget(note)
 
-        splitter.addWidget(left)
-
-        # RIGHT (scrollable)
+        splitter.addWidget(left)        # RIGHT
         right_wrap = QWidget()
-        self.right_wrap = right_wrap
         right_layout = QVBoxLayout(right_wrap)
         right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
 
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        self.right_scroll = right_scroll
-        right_layout.addWidget(right_scroll)
+        # In wide mode, we keep the left fixed and scroll only the right panel.
+        self.right_wrap = right_wrap
+        self.right_scroll = QScrollArea()
+        self.right_scroll.setWidgetResizable(True)
+        self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.right_scroll.setFrameShape(QFrame.NoFrame)
+        self.right_scroll.setWidget(self.right_wrap)
 
         right = QWidget()
-        self.right_content = right
-        right_scroll.setWidget(right)
+        right_layout.addWidget(right)
         right_l = QVBoxLayout(right)
         right_l.setContentsMargins(14, 14, 14, 14)
         right_l.setSpacing(12)
@@ -686,7 +824,7 @@ class MainWindow(QMainWindow):
         bl.addWidget(self.btn_print)
         right_l.addWidget(bottom)
 
-        splitter.addWidget(right_wrap)
+        splitter.addWidget(self.right_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
 
@@ -696,10 +834,6 @@ class MainWindow(QMainWindow):
         # Responsive scaling baseline (designed for 1920x1200)
         self._base_font_pt = float(self.font().pointSizeF() or 10.0)
         self._apply_scale()
-
-        # Responsive layout: two-column w/ right scroll on large screens; single stacked w/ full-window scroll on small screens
-        self._stack_threshold = 1280
-        self._is_stacked = False
         self._apply_responsive_layout()
 
     def make_table(self, headers: List[str]) -> QTableWidget:
@@ -734,12 +868,6 @@ class MainWindow(QMainWindow):
             background: __GOLD__; border: 0px; color: #0B1B2A;
             padding: 10px 12px; border-radius: 10px; font-weight: 800;
         }
-        QPushButton#addMachine {
-            background: #bebebe; border: 0px; color: #0B1B2A;
-            padding: 10px 12px; border-radius: 10px; font-weight: 800;
-        }
-        QPushButton#addMachine:hover { background: #D6D9DD; }
-        QPushButton#addMachine:pressed { background: #CBD5E1; }
         QPushButton {
             padding: 8px 10px; border-radius: 10px;
             border: 1px solid #D6D9DD; background: #F8FAFC;
@@ -762,7 +890,7 @@ class MainWindow(QMainWindow):
             selection-background-color: #DBEAFE;
         }
         QHeaderView::section {
-            background: #343551;
+            background: __RED__;
             color: white;
             padding: 8px;
             border: 0px;
@@ -870,70 +998,255 @@ class MainWindow(QMainWindow):
 
         machine_rows = []
         assignments: List[Assignment] = []
-        tech_all: List[int] = []
-        eng_all: List[int] = []
+        # Build pooled allocations per role (actual people), tracking whether each person requires travel.
+        tech_loads: List[int] = []
+        tech_travel: List[bool] = []
+        eng_loads: List[int] = []
+        eng_travel: List[bool] = []
 
-        for s in selections:
-            mi = self.data.models[s.model]
-            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
-            training_days = base_training if s.training_required else 0
+        def _merge_nontravel(loads: List[int], travel_flags: List[bool], extra_days: int, window: int) -> None:
+            """Spread extra (non-travel) days across existing people as evenly as possible.
+            If capacity is insufficient, add new people (who then require travel) and rebalance the added work across all."""
+            if extra_days <= 0:
+                return
+            if not loads:
+                # No existing team yet -> create a minimal team to cover the work without forcing travel.
+                # Use 1 person unless it exceeds the window; then add as many as needed.
+                people_needed = max(1, ceil_int(extra_days / window))
+                loads.extend([0] * people_needed)
+                travel_flags.extend([False] * people_needed)
 
-            tech_install_total = mi.tech_install_days_per_machine * s.qty
-            tech_total = tech_install_total + training_days
-            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
-            eng_training_days = eng_training_potential if s.training_required else 0
-            eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
+            # First try: fill existing capacity only
+            remaining = extra_days
+            # Greedy: always assign to the currently least-loaded person
+            while remaining > 0:
+                idx = min(range(len(loads)), key=lambda i: loads[i])
+                if loads[idx] >= window:
+                    break
+                loads[idx] += 1
+                remaining -= 1
 
-            single_training = 1 if (s.training_required and mi.training_applicable) else 0
-            if mi.tech_install_days_per_machine + single_training > window:
-                raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
-            if mi.eng_days_per_machine > 0:
-                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
-                if mi.eng_days_per_machine + single_eng_training > window:
-                    raise ValueError(
-                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
-                    )
+            if remaining <= 0:
+                return
 
-            tech_headcount = 0
-            eng_headcount = 0
+            # Not enough capacity -> add new people (these will require travel in/out)
+            additional_people = ceil_int(remaining / window)
+            loads.extend([0] * additional_people)
+            travel_flags.extend([True] * additional_people)
 
-            if tech_total > 0:
-                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
-                tech_headcount = len(tech_alloc)
-                tech_all.extend(tech_alloc)
-                for i, d in enumerate(tech_alloc, 1):
-                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
+            # Distribute remaining work across the expanded pool
+            while remaining > 0:
+                idx = min(range(len(loads)), key=lambda i: loads[i])
+                if loads[idx] >= window:
+                    # Should not happen, but avoid infinite loop
+                    break
+                loads[idx] += 1
+                remaining -= 1
 
-            if eng_total > 0:
-                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
-                eng_headcount = len(eng_alloc)
-                eng_all.extend(eng_alloc)
-                for i, d in enumerate(eng_alloc, 1):
-                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
+        
+    # Crew grouping rules:
+    # - RPC models are treated as a separate skill set from tech-only models.
+    #   RPC-C and RPC-DF can share the same RPC crew with each other.
+    # - Tech-only models with Travel Required = TRUE may be grouped into shared crews
+    #   only if the qualifications matrix supports a shared crew (2x T3 + 1x T2 across all models).
+    # - Models not present in the matrix (e.g., CONV, Production Support Day, etc.) are treated as
+    #   universally qualified and should be spread across existing tech-only crews (no new crews spawned).
+    RPC_MODELS = {"RPC-C", "RPC-DF"}
 
-            machine_rows.append({
-                "model": s.model,
-                "qty": s.qty,
-                "training_days": training_days,
-                "training_potential": base_training,
-                "training_required": s.training_required,
-                "training_applicable": bool(mi.training_applicable),
-                "eng_training_days": eng_training_days,
-                "eng_training_potential": eng_training_potential,
-                "tech_total": tech_total,
-                "eng_total": eng_total,
-                "tech_headcount": tech_headcount,
-                "eng_headcount": eng_headcount
-            })
+    # Load qualification matrix once (if available)
+    qual_matrix = getattr(self, "qual_matrix", {})
+    qual_models = getattr(self, "qual_models", set())
 
-        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
-        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
+    # Split selections
+    rpc_selections = [s for s in selections if s.model in RPC_MODELS]
+    techonly_selections = [s for s in selections if (s.model not in RPC_MODELS and self.data.models[s.model].eng_days_per_machine <= 0)]
+    other_selections = [s for s in selections if (s.model not in RPC_MODELS and self.data.models[s.model].eng_days_per_machine > 0)]
 
-        trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
-        n_people = len(trip_days_by_person)
-        total_trip_days = sum(trip_days_by_person)
-        total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
+    # ----------------------
+    # TECH allocation
+    # ----------------------
+    tech_loads = []
+    tech_travel_flags = []
 
+    # Helper: build a crew group list for travel-required tech-only models
+    class _CrewGroup:
+        __slots__ = ("models", "total_days", "members", "matrix_models")
+        def __init__(self):
+            self.models: set[str] = set()
+            self.matrix_models: set[str] = set()
+            self.total_days: int = 0
+            self.members: list = []
+
+    def _tech_mandays_for_sel(sel: 'MachineSelection') -> int:
+        mi = self.data.models[sel.model]
+        base_training = 0
+        if mi.training_applicable and sel.training_required and mi.training_required_default:
+            base_training = compute_training_days(sel.qty, mi.training_days_per_set)
+        return int(sel.qty * mi.tech_install_days_per_machine + base_training)
+
+    # Build groups for travel-required tech-only models
+    travel_true_techonly = [s for s in techonly_selections if self.data.models[s.model].travel_required]
+    travel_false_techonly = [s for s in techonly_selections if not self.data.models[s.model].travel_required]
+
+    groups: list[_CrewGroup] = []
+
+    # Sort bigger jobs first (helps reduce number of crews)
+    travel_true_techonly_sorted = sorted(travel_true_techonly, key=_tech_mandays_for_sel, reverse=True)
+
+    for sel in travel_true_techonly_sorted:
+        mi = self.data.models[sel.model]
+        d = _tech_mandays_for_sel(sel)
+
+        in_matrix = (sel.model in qual_models) and bool(qual_matrix)
+        best = None
+        best_score = None
+
+        if not groups:
+            g = _CrewGroup()
+            g.members.append(sel)
+            g.models.add(sel.model)
+            if in_matrix:
+                g.matrix_models.add(sel.model)
+            g.total_days += d
+            groups.append(g)
+            continue
+
+        # If model is not in matrix, treat as universally qualified and spread it to the least-loaded group.
+        if not in_matrix:
+            best = min(groups, key=lambda g: g.total_days)
+            best.members.append(sel)
+            best.models.add(sel.model)
+            best.total_days += d
+            continue
+
+        # Try to place into a compatible group; pick the group that minimizes resulting headcount then peak load.
+        for g in groups:
+            candidate_models = set(g.matrix_models)
+            candidate_models.add(sel.model)
+            if not candidate_models:
+                continue
+            if can_share_crew(candidate_models, qual_matrix):
+                new_total = g.total_days + d
+                # estimate minimal headcount for this group
+                headcount = max(1, int((new_total + max(1, customer_window_days) - 1) // max(1, customer_window_days)))
+                peak = math.ceil(new_total / headcount)
+                score = (headcount, peak, new_total)
+                if best is None or score < best_score:
+                    best = g
+                    best_score = score
+
+        if best is None:
+            g = _CrewGroup()
+            g.members.append(sel)
+            g.models.add(sel.model)
+            g.matrix_models.add(sel.model)
+            g.total_days += d
+            groups.append(g)
+        else:
+            best.members.append(sel)
+            best.models.add(sel.model)
+            best.matrix_models.add(sel.model)
+            best.total_days += d
+
+    # Allocate tech crews for groups (travel required)
+    for g in groups:
+        loads = balanced_allocate(g.total_days, customer_window_days)
+        tech_loads.extend(loads)
+        tech_travel_flags.extend([True] * len(loads))
+
+    # Allocate tech crew for RPCs (travel required)
+    if rpc_selections:
+        rpc_total_tech = 0
+        for sel in rpc_selections:
+            mi = self.data.models[sel.model]
+            base_training = 0
+            if mi.training_applicable and sel.training_required and mi.training_required_default:
+                base_training = compute_training_days(sel.qty, mi.training_days_per_set)
+            rpc_total_tech += int(sel.qty * mi.tech_install_days_per_machine + base_training)
+        loads = balanced_allocate(rpc_total_tech, customer_window_days)
+        tech_loads.extend(loads)
+        tech_travel_flags.extend([True] * len(loads))
+
+    # Allocate tech work for any other engineer-required (non-RPC) models (treat as travel-required separate)
+    # (kept for forward compatibility if you add future models with engineers that are not RPC)
+    if other_selections:
+        other_total_tech = 0
+        for sel in other_selections:
+            mi = self.data.models[sel.model]
+            base_training = 0
+            if mi.training_applicable and sel.training_required and mi.training_required_default:
+                base_training = compute_training_days(sel.qty, mi.training_days_per_set)
+            other_total_tech += int(sel.qty * mi.tech_install_days_per_machine + base_training)
+        loads = balanced_allocate(other_total_tech, customer_window_days)
+        tech_loads.extend(loads)
+        tech_travel_flags.extend([True] * len(loads))
+
+    # Merge non-travel tech-only selections across existing crews; if new people are required due to the window, travel applies.
+    for sel in travel_false_techonly:
+        extra_days = _tech_mandays_for_sel(sel)
+        tech_loads, tech_travel_flags = _merge_nontravel(tech_loads, tech_travel_flags, extra_days)
+
+    # ----------------------
+    # ENGINEER allocation
+    # ----------------------
+    eng_loads = []
+    eng_travel_flags = []
+
+    def _eng_mandays_for_sel(sel: 'MachineSelection') -> int:
+        mi = self.data.models[sel.model]
+        if mi.eng_days_per_machine <= 0:
+            return 0
+        base_training = 0
+        if mi.training_applicable and sel.training_required and mi.training_required_default:
+            base_training = compute_training_days(sel.qty, mi.training_days_per_set)
+        return int(sel.qty * mi.eng_days_per_machine + base_training)
+
+    # RPC engineers (travel required) - RPC-C and RPC-DF share the same engineer crew
+    if rpc_selections:
+        rpc_total_eng = sum(_eng_mandays_for_sel(s) for s in rpc_selections)
+        if rpc_total_eng > 0:
+            loads = balanced_allocate(rpc_total_eng, customer_window_days)
+            eng_loads.extend(loads)
+            eng_travel_flags.extend([True] * len(loads))
+
+    # Other engineer-required models (if any): treat as travel-required separate but allow non-travel merge if flagged
+    travel_true_eng = [s for s in other_selections if self.data.models[s.model].travel_required and _eng_mandays_for_sel(s) > 0]
+    travel_false_eng = [s for s in other_selections if (not self.data.models[s.model].travel_required) and _eng_mandays_for_sel(s) > 0]
+
+    if travel_true_eng:
+        total = sum(_eng_mandays_for_sel(s) for s in travel_true_eng)
+        loads = balanced_allocate(total, customer_window_days)
+        eng_loads.extend(loads)
+        eng_travel_flags.extend([True] * len(loads))
+
+    for sel in travel_false_eng:
+        extra_days = _eng_mandays_for_sel(sel)
+        if extra_days > 0:
+            eng_loads, eng_travel_flags = _merge_nontravel(eng_loads, eng_travel_flags, extra_days)
+
+
+# Build role totals
+        tech = RoleTotals(
+            headcount=len(tech_loads),
+            total_onsite_days=sum(tech_loads),
+            onsite_days_by_person=tech_loads,
+            day_rate=tech_rate,
+            labor_cost=sum(tech_loads) * tech_rate,
+            travel_required_by_person=tech_travel,
+        )
+        eng = RoleTotals(
+            headcount=len(eng_loads),
+            total_onsite_days=sum(eng_loads),
+            onsite_days_by_person=eng_loads,
+            day_rate=eng_rate,
+            labor_cost=sum(eng_loads) * eng_rate,
+            travel_required_by_person=eng_travel,
+        )
+
+        # Trip days (for expenses): onsite + (travel in/out only for travel-required people)
+        tech_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(tech.onsite_days_by_person, tech.travel_required_by_person)]
+        eng_trip_days = [d + (TRAVEL_DAYS_PER_PERSON if tr else 0) for d, tr in zip(eng.onsite_days_by_person, eng.travel_required_by_person)]
+        trip_days_by_person = tech_trip_days + eng_trip_days
         exp_lines: List[ExpenseLine] = []
 
         def add_exp(name, qty, unit, detail):
@@ -1018,8 +1331,8 @@ class MainWindow(QMainWindow):
             return
 
         # Colors (match UI theme)
-        tech_color = QColor("#e04426")  # Tech bar
-        eng_color = QColor("#6790a0")   # Engineer bar
+        tech_color = QColor("#C8102E")  # Pearson red
+        eng_color = QColor("#3A3A3A")   # charcoal gray
         tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
         eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
 
@@ -1042,7 +1355,7 @@ class MainWindow(QMainWindow):
             if is_tech:
                 v = tech_vals[int(labels[i][1:]) - 1]
                 set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (tech.travel_required_by_person and tech.travel_required_by_person[i]) else 0.0)
                 set_eng_on.append(0.0)
                 set_eng_tr.append(0.0)
             else:
@@ -1050,7 +1363,7 @@ class MainWindow(QMainWindow):
                 set_tech_on.append(0.0)
                 set_tech_tr.append(0.0)
                 set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if (eng.travel_required_by_person and eng.travel_required_by_person[i]) else 0.0)
 
         series.append(set_tech_on)
         series.append(set_tech_tr)
@@ -1063,12 +1376,16 @@ class MainWindow(QMainWindow):
         axis_y.append(labels)
 
         totals = []
-        for i in range(n):
-            if labels[i].startswith("T"):
-                v = tech_vals[int(labels[i][1:]) - 1]
+        for lab in labels:
+            if lab.startswith("T"):
+                idx = int(lab[1:]) - 1
+                v = tech_vals[idx]
+                extra = TRAVEL_DAYS_PER_PERSON if (tech.travel_required_by_person and idx < len(tech.travel_required_by_person) and tech.travel_required_by_person[idx]) else 0
             else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
+                idx = int(lab[1:]) - 1
+                v = eng_vals[idx]
+                extra = TRAVEL_DAYS_PER_PERSON if (eng.travel_required_by_person and idx < len(eng.travel_required_by_person) and eng.travel_required_by_person[idx]) else 0
+            totals.append(v + extra)
         max_v = max(totals) if totals else 1
 
         axis_x = QValueAxis()
@@ -1278,18 +1595,18 @@ class MainWindow(QMainWindow):
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
             .logo {{ text-align:right; }}
-            .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
+            .title {{ font-size: 18pt; font-weight: 800; color: #4B4F54; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
-            .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid th {{ background: #F1F5F9; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
-            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
+            .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: #FFFDF7; }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
+            h3 {{ color: #4B4F54; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
             .muted {{ color: #6D6E71; }}
-            .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
+            .total {{ font-size: 16pt; font-weight: 900; color: #4B4F54; }}
         </style></head><body>
             <div class="topbar">
                 <div>
@@ -1383,84 +1700,6 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Print error", str(e))
             return
 
-    
-    def _update_right_scroll_height_if_stacked(self):
-        """When stacked, expand the right scroll area to its content so the OUTER scroll handles scrolling."""
-        if not getattr(self, "_is_stacked", False):
-            return
-        try:
-            if hasattr(self, "right_scroll") and hasattr(self, "right_content"):
-                h = int(self.right_content.sizeHint().height()) + 80
-                self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-                self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                self.right_scroll.setMinimumHeight(h)
-                self.right_scroll.setMaximumHeight(h)
-        except Exception:
-            pass
-
-    def _apply_responsive_layout(self):
-        """Large screens: 2 columns w/ right-side scroll. Small screens: single stacked w/ full-window scroll."""
-        if not hasattr(self, "splitter") or not hasattr(self, "outer_scroll") or not hasattr(self, "right_scroll"):
-            return
-
-        w = int(self.width())
-        stacked = w < getattr(self, "_stack_threshold", 1280)
-
-        if stacked and not getattr(self, "_is_stacked", False):
-            self._is_stacked = True
-            self.splitter.setOrientation(Qt.Vertical)
-            # Enable whole-window scrolling; disable inner right scrolling
-            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self._update_right_scroll_height_if_stacked()
-            # Give left pane enough room; right pane will follow under it
-            try:
-                self.splitter.setSizes([650, 1000])
-            except Exception:
-                pass
-
-            # In stacked (single-column) mode, make the machine configuration area taller so
-            # multiple machine lines are visible without feeling cramped.
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
-                    self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            except Exception:
-                pass
-
-        elif (not stacked) and getattr(self, "_is_stacked", False):
-            self._is_stacked = False
-            self.splitter.setOrientation(Qt.Horizontal)
-            # Disable whole-window scrolling; allow right column to scroll
-            self.outer_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.outer_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            self.right_scroll.setMinimumHeight(0)
-            self.right_scroll.setMaximumHeight(16777215)
-            self.right_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            try:
-                self.splitter.setSizes([520, 1040])
-            except Exception:
-                pass
-
-            # Restore default sizing for wide (two-column) mode.
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(0)
-            except Exception:
-                pass
-
-        elif stacked:
-            # Still stacked; keep heights updated as content changes
-            self._update_right_scroll_height_if_stacked()
-            try:
-                if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
-            except Exception:
-                pass
-
     def _apply_scale(self):
         # Scale UI typography modestly with window size; keep within sensible bounds.
         w = max(self.width(), 1)
@@ -1473,10 +1712,90 @@ class MainWindow(QMainWindow):
         f.setPointSizeF(pt)
         self.setFont(f)
 
+    def _apply_responsive_layout(self):
+        """Wide: fixed left + scrollable right. Narrow: single stack + whole-window scroll."""
+        try:
+            w = self.width()
+            narrow = w < 1450  # laptops / small screens
+
+            if narrow and self._layout_mode != "narrow":
+                self._layout_mode = "narrow"
+                self.central_stack.setCurrentWidget(self.page_narrow)
+
+                # Move widgets into single stack
+                # Take right panel out of the wide scroll area
+                try:
+                    if self.right_scroll.widget() is not None:
+                        self.right_scroll.takeWidget()
+                except Exception:
+                    pass
+
+                # Detach from splitter and add to narrow layout
+                for wid in (self.left_panel, self.right_wrap):
+                    try:
+                        wid.setParent(None)
+                    except Exception:
+                        pass
+
+                # Ensure order: left first, then right
+                if self.narrow_layout.indexOf(self.left_panel) == -1:
+                    self.narrow_layout.insertWidget(0, self.left_panel)
+                if self.narrow_layout.indexOf(self.right_wrap) == -1:
+                    self.narrow_layout.addWidget(self.right_wrap)
+
+                # Chart should shrink a bit in narrow mode
+                if hasattr(self, "chart_view"):
+                    self.chart_view.setMinimumHeight(220)
+                    self.chart_view.setMaximumHeight(280)
+
+            elif (not narrow) and self._layout_mode != "wide":
+                self._layout_mode = "wide"
+                self.central_stack.setCurrentWidget(self.page_wide)
+
+                # Remove from narrow stack
+                try:
+                    self.narrow_layout.removeWidget(self.left_panel)
+                    self.narrow_layout.removeWidget(self.right_wrap)
+                except Exception:
+                    pass
+                try:
+                    self.left_panel.setParent(None)
+                    self.right_wrap.setParent(None)
+                except Exception:
+                    pass
+
+                # Restore right scroll widget
+                try:
+                    self.right_scroll.setWidget(self.right_wrap)
+                except Exception:
+                    pass
+
+                # Ensure splitter has left and right scroll in correct order
+                # (Splitter may be empty after reparenting)
+                if self.splitter.indexOf(self.left_panel) == -1:
+                    self.splitter.insertWidget(0, self.left_panel)
+                if self.splitter.indexOf(self.right_scroll) == -1:
+                    self.splitter.insertWidget(1, self.right_scroll)
+                self.splitter.setOrientation(Qt.Horizontal)
+                self.splitter.setStretchFactor(0, 1)
+                self.splitter.setStretchFactor(1, 2)
+
+                if hasattr(self, "chart_view"):
+                    self.chart_view.setMinimumHeight(300)
+                    self.chart_view.setMaximumHeight(16777215)
+
+            # Help prevent horizontal scrolling due to tables on small screens
+            for tbl in (self.tbl_breakdown, self.tbl_assign, self.tbl_labor, self.tbl_exp):
+                if tbl is not None:
+                    tbl.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        except Exception:
+            pass
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._apply_responsive_layout()
         self._apply_scale()
+        self._apply_responsive_layout()
+
     def closeEvent(self, event):
 
         event.accept()
