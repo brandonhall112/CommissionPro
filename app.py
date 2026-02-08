@@ -36,112 +36,6 @@ def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") ->
 
     return None
 
-QUAL_MATRIX_FILENAME = "Machine Qualifications for PCP Quoting.xlsx"
-
-def resolve_qual_matrix_path() -> Path | None:
-    """Return path to the qualifications matrix if present in the bundled assets (or alongside the EXE)."""
-    try:
-        assets = resolve_assets_dir()
-        p = assets / QUAL_MATRIX_FILENAME
-        if p.exists():
-            return p
-    except Exception:
-        pass
-    # Fallback: look next to this script / exe
-    try:
-        root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
-        p2 = root / "assets" / QUAL_MATRIX_FILENAME
-        if p2.exists():
-            return p2
-    except Exception:
-        pass
-    return None
-
-
-class QualificationMatrix:
-    """Loads a technician qualification matrix (T1/T2/T3) by model.
-
-    Expected format:
-      - Row 1: headers with model names starting in column B.
-      - Column A (rows 2+): technician names.
-      - Body cells: T1/T2/T3 (case-insensitive). Blank = not qualified.
-    """
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self.models: set[str] = set()
-        self._ratings: dict[str, dict[str, int]] = {}  # tech -> model -> level (1-3)
-
-        wb = load_workbook(self.path, data_only=True)
-        ws = wb.active
-
-        # Headers
-        headers: list[str] = []
-        for c in range(2, ws.max_column + 1):
-            v = ws.cell(row=1, column=c).value
-            if v is None or str(v).strip() == "":
-                continue
-            headers.append(str(v).strip())
-        self.models = set(headers)
-
-        def parse_level(val) -> int:
-            if val is None:
-                return 0
-            s = str(val).strip().upper()
-            if s == "":
-                return 0
-            if s.startswith("T") and s[1:].isdigit():
-                n = int(s[1:])
-                return n if n in (1, 2, 3) else 0
-            return 0
-
-        # Rows
-        for r in range(2, ws.max_row + 1):
-            tech = ws.cell(row=r, column=1).value
-            if tech is None or str(tech).strip() == "":
-                continue
-            tech_name = str(tech).strip()
-            row_map: dict[str, int] = {}
-            for ci, model in enumerate(headers, start=2):
-                lvl = parse_level(ws.cell(row=r, column=ci).value)
-                if lvl:
-                    row_map[model] = lvl
-            self._ratings[tech_name] = row_map
-
-    @staticmethod
-    def try_load() -> "QualificationMatrix | None":
-        p = resolve_qual_matrix_path()
-        if p and p.exists():
-            try:
-                return QualificationMatrix(p)
-            except Exception:
-                return None
-        return None
-
-    def _common_techs(self, models: list[str], min_level: int) -> set[str]:
-        models = [m for m in models if m in self.models]
-        if not models:
-            return set()
-        ok: set[str] | None = None
-        for tech, mp in self._ratings.items():
-            if all(mp.get(m, 0) >= min_level for m in models):
-                ok = (ok or set())
-                ok.add(tech)
-        return ok or set()
-
-    def group_ok(self, models: list[str]) -> bool:
-        """True if a single crew can cover all models.
-
-        Rule: at least 2 technicians with T3 across *all* models, and at least 3 technicians with >=T2 across all models.
-        """
-        models = [m for m in models if m in self.models]
-        if not models:
-            return False
-        t3 = self._common_techs(models, 3)
-        t2 = self._common_techs(models, 2)
-        return (len(t3) >= 2) and (len(t2) >= 3)
-
-
 
 
 def resolve_assets_dir() -> Path:
@@ -433,44 +327,22 @@ class ExcelData:
                     out.append(s)
             self.requirements = out
 
-    def get_rate(self, key: str) -> Tuple[float, str]:
-        k = key.lower().strip()
+    def get_rate(self, key: str, default=None):
+        """Return (unit_price, description) for a rate key.
+
+        Backwards-compatible: some callers pass a 2nd positional arg as a default.
+        If not found and default is provided, returns default instead of raising.
+        """
+        k = str(key).lower().strip()
         if k in self.rates:
             rv = self.rates[k]
             return float(rv["unit_price"]), str(rv["description"])
         for rk, rv in self.rates.items():
-            if k in rk:
+            if k and k in rk:
                 return float(rv["unit_price"]), str(rv["description"])
-        raise KeyError(f"Rate not found for '{key}'")
-
-
-        def get(self, section_or_key, key=None, default=None, *rest):
-            """Safe getter used by various app versions.
-
-            Supports calls like:
-              - get(section, key) -> value or None
-              - get(section, key, default) -> value or default
-              - get(key) -> tries common rate sections for a key
-            Extra positional args are ignored (treated as default if provided).
-            """
-            # If caller passed more than 3 positional args, treat the 3rd as default and ignore the rest
-            if rest:
-                # some legacy code may pass (section, key, field, default); keep the last arg as default
-                default = rest[-1] if default is None else default
-
-            # 1-arg form: get(key)
-            if key is None:
-                k = section_or_key
-                for sec in ("Service Rates", "Rates", "rates"):
-                    if sec in self.rates and k in self.rates[sec]:
-                        return self.rates[sec][k]
-                return default
-
-            # 2/3-arg form: get(section, key[, default])
-            sec = section_or_key
-            if sec in self.rates and key in self.rates[sec]:
-                return self.rates[sec][key]
+        if default is not None:
             return default
+        raise KeyError(f"Rate not found for '{key}'")
 
 
 class MachineLine(QFrame):
@@ -633,7 +505,6 @@ class MainWindow(QMainWindow):
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
-        self.qual = QualificationMatrix.try_load()
         self.lines: List[MachineLine] = []
 
         central_container = QWidget()
@@ -991,210 +862,245 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Excel load error", str(e))
 
     def calc(self):
-        selections = [ln.value() for ln in self.lines if ln.value().model and ln.value().qty > 0]
+        selections = [ln.value() for ln in self.lines]
+        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
+        if not selections:
+            raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
         window = int(self.spin_window.value())
-        if window <= 0:
-            window = 1
 
-        # Rates come from the bundled Excel "Service Rates" tab.
-        # Older drafts used editable spin-box controls (spin_tech_rate/spin_eng_rate
-        # and travel-in/out). Those controls are not part of the current UI, so
-        # we read rates directly from the workbook and default travel-in/out to 1 day
-        # each when travel is required.
-        tech_day_rate = float(self.data.get_rate("Tech. Regular Time", 155.0))
-        eng_day_rate = float(self.data.get_rate("Eng. Regular Time", 206.0))
+        tech_hr, _ = self.data.get_rate("tech. regular time")
+        eng_hr, _ = self.data.get_rate("eng. regular time")
+        hours_per_day = 8
+        tech_day_rate = tech_hr * hours_per_day
+        eng_day_rate = eng_hr * hours_per_day
 
-        travel_in = 1
-        travel_out = 1
-
-        qual = getattr(self, "qual", None)
-
-        def training_days_for(sel: Selection) -> int:
-            if not self.training_app_map.get(sel.model, False):
-                return 0
-            if not sel.training_required:
-                return 0
-            return int(math.ceil(sel.qty / 3.0))
-
-        # -------------------------------------------------
-        # TECHNICIAN ALLOCATION (with qualification grouping)
-        # -------------------------------------------------
-        model_to_tech_hc: dict[str, int] = {}
-        tech_days_per_person: dict[int, int] = {}
-        tech_next_id = 1
-        assignments: list[Assignment] = []
-
-        # Categorize selections
-        rpc_sels = [s for s in selections if s.model.upper().startswith("RPC")]
-        eng_required_sels = [s for s in selections if (not s.model.upper().startswith("RPC")) and float(self.data.models[s.model].engineer_days_per_machine) > 0.0]
-        tech_only_sels = [s for s in selections if (not s.model.upper().startswith("RPC")) and float(self.data.models[s.model].engineer_days_per_machine) <= 0.0]
-
-        matrix_sels = [s for s in tech_only_sels if qual and (s.model in getattr(qual, "models", set()))]
-        universal_sels = [s for s in tech_only_sels if (not qual) or (s.model not in getattr(qual, "models", set()))]
-
-        def tech_workload(sel: Selection) -> int:
-            d = self.data.models[sel.model]
-            base = int(sel.qty * float(d.technician_days_per_machine))
-            return int(base + (training_days_for(sel) if base > 0 else 0))
-
-        # Greedy grouping among matrix-covered tech-only models
-        groups: list[list[Selection]] = []
-        if qual and matrix_sels:
-            for s in sorted(matrix_sels, key=lambda x: -tech_workload(x)):
-                placed = False
-                for g in groups:
-                    if qual.group_ok([x.model for x in g] + [s.model]):
-                        g.append(s)
-                        placed = True
-                        break
-                if not placed:
-                    groups.append([s])
-        else:
-            groups = [[s] for s in matrix_sels]
-
-        # If we only have "universal" tech-only items, keep them on a single existing crew
-        if not groups and universal_sels:
-            groups = [[]]
-
-        # Distribute universal tech-only items across existing groups to avoid spawning new crews
-        group_loads = [sum(tech_workload(s) for s in g) for g in groups]
-        for s in sorted(universal_sels, key=lambda x: -tech_workload(x)):
-            if not groups:
-                groups = [[]]
-                group_loads = [0]
-            idx = min(range(len(groups)), key=lambda i: group_loads[i])
-            groups[idx].append(s)
-            group_loads[idx] += tech_workload(s)
-
-        def allocate_group(label: str, sels_in_group: list[Selection]):
-            nonlocal tech_next_id
-            total_days = sum(tech_workload(s) for s in sels_in_group)
-            if total_days <= 0:
-                return
-            headcount = max(1, int(math.ceil(total_days / float(window))))
-            days_list = balanced_allocate(int(total_days), headcount)
-            for i, d in enumerate(days_list, start=1):
-                tech_days_per_person[tech_next_id] = int(d)
-                assignments.append(Assignment(label, "Technician", tech_next_id, int(d), float(d) * tech_day_rate))
-                tech_next_id += 1
-            for s in sels_in_group:
-                model_to_tech_hc[s.model] = headcount
-
-        # Allocate grouped tech-only crews
-        for gi, g in enumerate(groups):
-            if not g:
-                continue
-            label_models = ", ".join(sorted({s.model for s in g}))
-            allocate_group(f"Tech Crew {gi+1} ({label_models})", g)
-
-        # Allocate RPC tech crew as its own group (robot cell skillset)
-        if rpc_sels:
-            label_models = ", ".join(sorted({s.model for s in rpc_sels}))
-            allocate_group(f"Robot Cell Crew (Tech) ({label_models})", rpc_sels)
-
-        # Allocate technician workload for engineer-required non-RPC models (separate)
-        for s in eng_required_sels:
-            if s.model in model_to_tech_hc:
-                continue
-            allocate_group(f"{s.model} (Tech)", [s])
-
-        # -------------------------------------------------
-        # ENGINEER ALLOCATION (RPC-C and RPC-DF share crew)
-        # -------------------------------------------------
-        model_to_eng_hc: dict[str, int] = {}
-        eng_days_per_person: dict[int, int] = {}
-        eng_next_id = 1
-
-        def eng_workload(sel: Selection) -> int:
-            d = self.data.models[sel.model]
-            base = int(sel.qty * float(d.engineer_days_per_machine))
-            if base <= 0:
-                return 0
-            return int(base + training_days_for(sel))
-
-        def allocate_eng_group(label: str, sels_in_group: list[Selection]):
-            nonlocal eng_next_id
-            total_days = sum(eng_workload(s) for s in sels_in_group)
-            if total_days <= 0:
-                return
-            headcount = max(1, int(math.ceil(total_days / float(window))))
-            days_list = balanced_allocate(int(total_days), headcount)
-            for i, d in enumerate(days_list, start=1):
-                eng_days_per_person[eng_next_id] = int(d)
-                assignments.append(Assignment(label, "Engineer", eng_next_id, int(d), float(d) * eng_day_rate))
-                eng_next_id += 1
-            for s in sels_in_group:
-                model_to_eng_hc[s.model] = headcount
-
-        if rpc_sels:
-            label_models = ", ".join(sorted({s.model for s in rpc_sels}))
-            allocate_eng_group(f"Robot Cell Crew (Eng) ({label_models})", rpc_sels)
-
-        for s in eng_required_sels:
-            if s.model in model_to_eng_hc:
-                allocate_eng_group(f"{s.model} (Eng)", [s])  # still make sure we count it
-            else:
-                allocate_eng_group(f"{s.model} (Eng)", [s])
-
-        # -------------------------------------------------
-        # Build machine breakdown rows (per selection/model)
-        # -------------------------------------------------
         machine_rows = []
+        assignments: List[Assignment] = []
+        tech_all: List[int] = []
+        eng_all: List[int] = []
+
         for s in selections:
-            d = self.data.models[s.model]
-            base_training = training_days_for(s)
+            mi = self.data.models[s.model]
+            base_training = ceil_int(s.qty / TRAINING_MACHINES_PER_DAY) if mi.training_applicable else 0
+            training_days = base_training if s.training_required else 0
 
-            base_tech = int(s.qty * float(d.technician_days_per_machine))
-            base_eng = int(s.qty * float(d.engineer_days_per_machine))
+            tech_install_total = mi.tech_install_days_per_machine * s.qty
+            tech_total = tech_install_total + training_days
+            eng_training_potential = base_training if (mi.eng_days_per_machine > 0) else 0
+            eng_training_days = eng_training_potential if s.training_required else 0
+            eng_total = (mi.eng_days_per_machine * s.qty) + eng_training_days
 
-            tech_total = base_tech + (base_training if base_tech > 0 else 0)
-            eng_total = base_eng + (base_training if base_eng > 0 else 0)
+            single_training = 1 if (s.training_required and mi.training_applicable) else 0
+            if mi.tech_install_days_per_machine + single_training > window:
+                raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
+            if mi.eng_days_per_machine > 0:
+                single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
+                if mi.eng_days_per_machine + single_eng_training > window:
+                    raise ValueError(
+                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
+                    )
 
-            if self.training_app_map.get(s.model, False):
-                if s.training_required:
-                    s_train = f"(incl. {base_training} Train)"
-                else:
-                    s_train = "(training excluded)"
-            else:
-                s_train = ""
+            tech_headcount = 0
+            eng_headcount = 0
 
-            tech_hc = int(model_to_tech_hc.get(s.model, math.ceil(tech_total / float(window)) if tech_total else 0))
-            eng_hc = int(model_to_eng_hc.get(s.model, math.ceil(eng_total / float(window)) if eng_total else 0))
+            if tech_total > 0:
+                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
+                tech_headcount = len(tech_alloc)
+                tech_all.extend(tech_alloc)
+                for i, d in enumerate(tech_alloc, 1):
+                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
 
-            machine_rows.append((
-                s.model,
-                s.qty,
-                f"{tech_total} {s_train}".strip(),
-                tech_hc,
-                (f"{eng_total} {s_train}".strip() if eng_total else ""),
-                eng_hc
-            ))
+            if eng_total > 0:
+                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
+                eng_headcount = len(eng_alloc)
+                eng_all.extend(eng_alloc)
+                for i, d in enumerate(eng_alloc, 1):
+                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
 
-        tech_all = list(tech_days_per_person.values())
-        eng_all = list(eng_days_per_person.values())
+            machine_rows.append({
+                "model": s.model,
+                "qty": s.qty,
+                "training_days": training_days,
+                "training_potential": base_training,
+                "training_required": s.training_required,
+                "training_applicable": bool(mi.training_applicable),
+                "eng_training_days": eng_training_days,
+                "eng_training_potential": eng_training_potential,
+                "tech_total": tech_total,
+                "eng_total": eng_total,
+                "tech_headcount": tech_headcount,
+                "eng_headcount": eng_headcount
+            })
 
-        tech = RoleTotals(len(tech_all), sum(tech_all), tech_all, tech_day_rate, sum(float(d) * tech_day_rate for d in tech_all))
-        eng = RoleTotals(len(eng_all), sum(eng_all), eng_all, eng_day_rate, sum(float(d) * eng_day_rate for d in eng_all))
+        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
+        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
 
-        # -------------------------------------------------
-        # Expenses
-        # -------------------------------------------------
-        trip_days_by_person = {a.person_id: (travel_in + travel_out) for a in assignments}
-        expenses_rows, expenses_total = self.expenses_calc(len(assignments), travel_in, travel_out)
+        trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
+        n_people = len(trip_days_by_person)
+        total_trip_days = sum(trip_days_by_person)
+        total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
 
-        labor_lines = [(a.role, a.person_label(), a.days, a.cost) for a in assignments]
-        exp_lines = [(a.role, a.person_label(), trip_days_by_person.get(a.person_id, 0)) for a in assignments]
+        exp_lines: List[ExpenseLine] = []
+
+        def add_exp(name, qty, unit, detail):
+            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
+
+        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
+        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
+
+        parking, _ = self.data.get_rate("parking")
+        car, _ = self.data.get_rate("car rental")
+        hotel, _ = self.data.get_rate("hotel")
+        per_diem, _ = self.data.get_rate("per diem weekday")
+        prep, _ = self.data.get_rate("pre/post trip prep")
+        travel_time_rate, _ = self.data.get_rate("travel time")
+
+        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
+        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
+        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
+        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
+        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
+        travel_hours = 16 * n_people
+        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
+
+        exp_total = sum(l.extended for l in exp_lines)
+        max_onsite = max([a.onsite_days for a in assignments], default=0)
+        grand_total = exp_total + tech.labor_cost + eng.labor_cost
 
         meta = {
             "machine_rows": machine_rows,
-            "assignments": exp_lines,
-            "labor_lines": labor_lines,
-            "expenses_rows": expenses_rows,
-            "expenses_total": float(expenses_total),
+            "assignments": assignments,
+            "window": window,
+            "max_onsite": max_onsite,
+            "n_people": n_people,
+            "total_trip_days": total_trip_days,
+            "exp_total": exp_total,
+            "grand_total": grand_total
         }
-
         return tech, eng, exp_lines, meta
+
+
+    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
+        """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
+        try:
+            tbl.resizeRowsToContents()
+            header_h = tbl.horizontalHeader().height()
+            frame = tbl.frameWidth() * 2
+            total = header_h + frame + 12
+            n = tbl.rowCount()
+            if visible_rows is not None:
+                n = min(n, int(visible_rows))
+            for r in range(n):
+                total += tbl.rowHeight(r)
+            total = min(total, max_height)
+            tbl.setMinimumHeight(total)
+            tbl.setMaximumHeight(total)
+        except Exception:
+            pass
+
+
+    
+    
+    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
+        """Polished horizontal stacked bar chart of onsite + travel days by person."""
+        labels: List[str] = []
+        tech_vals: List[int] = []
+        eng_vals: List[int] = []
+
+        for d in tech.onsite_days_by_person:
+            labels.append(f"T{len(tech_vals)+1}")
+            tech_vals.append(int(d))
+
+        for d in eng.onsite_days_by_person:
+            labels.append(f"E{len(eng_vals)+1}")
+            eng_vals.append(int(d))
+
+        self.chart.removeAllSeries()
+        self.chart.setTitle("Workload (days)")
+        self.chart.setBackgroundRoundness(8)
+        self.chart.setAnimationOptions(QChart.SeriesAnimations)
+
+        if len(labels) == 0:
+            return
+
+        # Colors (match UI theme)
+        tech_color = QColor("#e04426")  # Tech bar
+        eng_color = QColor("#6790a0")   # Engineer bar
+        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
+        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+
+        series = QHorizontalStackedBarSeries()
+
+        set_tech_on = QBarSet("Tech")
+        set_tech_tr = QBarSet("Tech travel")
+        set_eng_on = QBarSet("Eng")
+        set_eng_tr = QBarSet("Eng travel")
+
+        set_tech_on.setColor(tech_color)
+        set_tech_tr.setColor(tech_travel)
+        set_eng_on.setColor(eng_color)
+        set_eng_tr.setColor(eng_travel)
+
+        n = len(labels)
+        # Build arrays aligned to labels: first tech people then engineer people
+        for i in range(n):
+            is_tech = labels[i].startswith("T")
+            if is_tech:
+                v = tech_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(float(v))
+                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+                set_eng_on.append(0.0)
+                set_eng_tr.append(0.0)
+            else:
+                v = eng_vals[int(labels[i][1:]) - 1]
+                set_tech_on.append(0.0)
+                set_tech_tr.append(0.0)
+                set_eng_on.append(float(v))
+                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
+
+        series.append(set_tech_on)
+        series.append(set_tech_tr)
+        series.append(set_eng_on)
+        series.append(set_eng_tr)
+
+        self.chart.addSeries(series)
+
+        axis_y = QBarCategoryAxis()
+        axis_y.append(labels)
+
+        totals = []
+        for i in range(n):
+            if labels[i].startswith("T"):
+                v = tech_vals[int(labels[i][1:]) - 1]
+            else:
+                v = eng_vals[int(labels[i][1:]) - 1]
+            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
+        max_v = max(totals) if totals else 1
+
+        axis_x = QValueAxis()
+        axis_x.setRange(0, max(1, int(max_v)))
+        axis_x.setLabelFormat("%d")
+        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
+
+        for ax in list(self.chart.axes()):
+            self.chart.removeAxis(ax)
+
+        self.chart.addAxis(axis_y, Qt.AlignLeft)
+        self.chart.addAxis(axis_x, Qt.AlignBottom)
+        series.attachAxis(axis_y)
+        series.attachAxis(axis_x)
+
+        # Labels/legend polish
+        try:
+            series.setLabelsVisible(True)
+            series.setLabelsPosition(series.LabelsInsideEnd)
+            series.setLabelsFormat("@value")
+        except Exception:
+            pass
+
+        self.chart.legend().setVisible(True)
+        self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
         if len(self.lines) == 0:
