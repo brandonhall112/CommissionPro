@@ -444,6 +444,38 @@ class ExcelData:
         raise KeyError(f"Rate not found for '{key}'")
 
 
+    def get(self, *args):
+        """Compatibility helper.
+
+        Supports:
+          - get(section, key)
+          - get(section, key, default)
+          - get(key)  (tries common rate keys)
+        """
+        if len(args) == 1:
+            key = args[0]
+            # try common places
+            for sec in ("Service Rates", "Rates", "rates"):
+                if sec in self.rates and key in self.rates[sec]:
+                    return self.rates[sec][key]
+            # flat scan
+            for sec, d in self.rates.items():
+                if key in d:
+                    return d[key]
+            raise KeyError(key)
+        elif len(args) == 2:
+            section, key = args
+            if section in self.rates:
+                return self.rates[section].get(key)
+            raise KeyError(section)
+        elif len(args) == 3:
+            section, key, default = args
+            if section in self.rates:
+                return self.rates[section].get(key, default)
+            return default
+        else:
+            raise TypeError("ExcelData.get() expects 1 to 3 arguments")
+
 class MachineLine(QFrame):
     def __init__(self, models: List[str], training_applicable_map: Dict[str, bool], on_change, on_delete):
         super().__init__()
