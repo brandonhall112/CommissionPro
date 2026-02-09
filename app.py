@@ -1019,6 +1019,8 @@ class MainWindow(QMainWindow):
 
         window = int(self.spin_window.value())
 
+
+        install_window = window
         tech_hr, _ = self.data.get_rate("tech. regular time")
         eng_hr, _ = self.data.get_rate("eng. regular time")
         hours_per_day = 8
