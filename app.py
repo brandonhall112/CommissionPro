@@ -458,8 +458,6 @@ class MachineLine(QFrame):
                 self.chk_training.setChecked(False)
             else:
                 self.chk_training.show()
-                if not self.chk_training.isChecked():
-                    self.chk_training.setChecked(True)
         self.on_change()
 
     def _changed(self, *_):
@@ -877,6 +875,7 @@ class MainWindow(QMainWindow):
         if self.empty_hint is not None:
             self.empty_hint.hide()
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
+        ln.cmb_model.currentIndexChanged.connect(self._refresh_model_choices)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
         self._refresh_model_choices()
