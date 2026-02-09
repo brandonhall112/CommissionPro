@@ -899,6 +899,7 @@ class MainWindow(QMainWindow):
             return
 
         selected = []
+        training_state = {ln: bool(ln.chk_training.isChecked()) for ln in self.lines}
         for ln in self.lines:
             v = ln.value().model
             if v:
@@ -906,6 +907,7 @@ class MainWindow(QMainWindow):
 
         for ln in self.lines:
             current = ln.value().model
+            prior_training_checked = training_state.get(ln, True)
             ln.cmb_model.blockSignals(True)
             ln.cmb_model.clear()
             ln.cmb_model.addItem("— Select —")
@@ -939,6 +941,7 @@ class MainWindow(QMainWindow):
                         ln.chk_training.setChecked(False)
                     else:
                         ln.chk_training.show()
+                        ln.chk_training.setChecked(prior_training_checked)
                         if not ln.chk_training.isChecked():
                             ln.chk_training.setChecked(True)
             finally:
