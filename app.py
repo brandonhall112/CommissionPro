@@ -942,6 +942,8 @@ class MainWindow(QMainWindow):
                     else:
                         ln.chk_training.show()
                         ln.chk_training.setChecked(prior_training_checked)
+                        if not ln.chk_training.isChecked():
+                            ln.chk_training.setChecked(True)
             finally:
                 ln.chk_training.blockSignals(False)
 
