@@ -879,17 +879,70 @@ class MainWindow(QMainWindow):
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
+        self._refresh_model_choices()
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
         self.lines.remove(ln)
         ln.setParent(None)
         ln.deleteLater()
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.empty_hint.show()
             self.reset_views()
         else:
             self.recalc()
+
+    def _refresh_model_choices(self):
+        """Prevent selecting the same machine model on multiple lines."""
+        if not self.lines:
+            return
+
+        selected = []
+        for ln in self.lines:
+            v = ln.value().model
+            if v:
+                selected.append(v)
+
+        for ln in self.lines:
+            current = ln.value().model
+            ln.cmb_model.blockSignals(True)
+            ln.cmb_model.clear()
+            ln.cmb_model.addItem("— Select —")
+            ln.cmb_model.addItems(self.models_sorted)
+
+            if current and current in self.models_sorted:
+                ln.cmb_model.setCurrentIndex(self.models_sorted.index(current) + 1)
+            else:
+                ln.cmb_model.setCurrentIndex(0)
+
+            # Disable models already chosen on other lines.
+            for idx, model in enumerate(self.models_sorted, start=1):
+                item = ln.cmb_model.model().item(idx)
+                if item is not None:
+                    item.setEnabled(not (model in selected and model != current))
+
+            ln.cmb_model.blockSignals(False)
+
+            model = ln.cmb_model.currentText().strip()
+            if model == "— Select —":
+                model = ""
+            ln.chk_training.blockSignals(True)
+            try:
+                if not model:
+                    ln.chk_training.hide()
+                    ln.chk_training.setChecked(False)
+                else:
+                    applicable = bool(ln.training_applicable_map.get(model, True))
+                    if not applicable:
+                        ln.chk_training.hide()
+                        ln.chk_training.setChecked(False)
+                    else:
+                        ln.chk_training.show()
+                        if not ln.chk_training.isChecked():
+                            ln.chk_training.setChecked(True)
+            finally:
+                ln.chk_training.blockSignals(False)
 
     def _load_skills_matrix(self):
         self.skills_matrix = None
@@ -987,14 +1040,10 @@ class MainWindow(QMainWindow):
         try:
             self.data = ExcelData(Path(fp))
             self.models_sorted = sorted(self.data.models.keys())
+            self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
             for ln in self.lines:
-                cur = ln.cmb_model.currentText()
-                ln.cmb_model.blockSignals(True)
-                ln.cmb_model.clear()
-                ln.cmb_model.addItems(self.models_sorted)
-                if cur in self.models_sorted:
-                    ln.cmb_model.setCurrentIndex(self.models_sorted.index(cur))
-                ln.cmb_model.blockSignals(False)
+                ln.training_applicable_map = self.training_app_map
+            self._refresh_model_choices()
             self.recalc()
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
@@ -1301,6 +1350,7 @@ class MainWindow(QMainWindow):
         self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
