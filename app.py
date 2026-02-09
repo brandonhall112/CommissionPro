@@ -36,143 +36,194 @@ def resolve_excel_path(expected_name: str = "Tech days and quote rates.xlsx") ->
 
     return None
 
+QUAL_MATRIX_FILENAME = "Machine Qualifications for PCP Quoting.xlsx"
+
+def resolve_qual_matrix_path() -> Path | None:
+    """Return path to the qualifications matrix if present in the bundled assets (or alongside the EXE)."""
+    try:
+        assets = resolve_assets_dir()
+        p = assets / QUAL_MATRIX_FILENAME
+        if p.exists():
+            return p
+    except Exception:
+        pass
+    # Fallback: look next to this script / exe
+    try:
+        root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+        p2 = root / "assets" / QUAL_MATRIX_FILENAME
+        if p2.exists():
+            return p2
+    except Exception:
+        pass
+    return None
 
 
-def resolve_assets_dir() -> Path:
-    """Return the assets directory for dev + PyInstaller (onefile/onedir).
-
-    onefile: extracted to sys._MEIPASS/assets
-    onedir: typically <exe_dir>/_internal/assets (new PyInstaller layout) or <exe_dir>/assets
-    dev:   <repo>/assets
+class QualificationMatrix:
     """
-    meipass = getattr(sys, "_MEIPASS", None)
-    if meipass:
-        return (Path(meipass).resolve() / "assets").resolve()
+    Reads the skills/qualification matrix from assets.
 
-    if getattr(sys, "frozen", False):
-        exe_dir = Path(sys.executable).resolve().parent
-        for p in (exe_dir / "_internal" / "assets", exe_dir / "assets"):
-            try:
-                if p.exists():
-                    return p.resolve()
-            except Exception:
-                pass
-        return (exe_dir / "_internal" / "assets").resolve()
+    Supports TWO formats:
 
-    return (Path(__file__).resolve().parent / "assets").resolve()
+    (A) Legacy (older):
+        - Row 1: Model names start at column B
+        - Column A: Tech name
+        - Cells contain T1/T2/T3
 
+    (B) Current (clean) format (what you're using now):
+        - Row 1: "Resource Type", "Resource", <Model1>, <Model2>, ...
+        - Rows: Resource Type is "Technician" or "Engineer"
+        - Cells contain T1/T2/T3 (and may be blank)
 
-import numpy as np
-import openpyxl
-
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
-    QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
-)
-from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
-from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QPainter, QColor
-from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QHorizontalStackedBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
-import base64
-
-APP_TITLE = "Pearson Commissioning Pro"
-
-# Business rules
-TRAINING_MACHINES_PER_DAY = 3  # 1 training day per 3 machines (ceil)
-DEFAULT_INSTALL_WINDOW = 7
-MIN_INSTALL_WINDOW = 3
-MAX_INSTALL_WINDOW = 14
-TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
-
-# Requested overrides
-OVERRIDE_AIRFARE_PER_PERSON = 1500.0
-OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
-
-ASSETS_DIR = Path(__file__).resolve().parent / "assets"
-DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
-LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
-
-
-def ceil_int(x: float) -> int:
-    return int(math.ceil(float(x)))
-
-
-def balanced_allocate(total_days: int, headcount: int) -> List[int]:
-    """Balance integer days to minimize the maximum assigned days."""
-    if headcount <= 0:
-        return []
-    loads = [0] * headcount
-    for _ in range(int(total_days)):
-        i = int(np.argmin(loads))
-        loads[i] += 1
-    loads.sort(reverse=True)
-    return loads
-
-
-
-
-def chunk_allocate_by_machine(install_days_per_machine: int, qty: int, training_days: int, window: int) -> List[int]:
-    """Allocate work using whole-machine install chunks + whole-day training chunks.
-
-    Install days are assigned per machine (no fractional splitting). Training days are 1-day chunks.
-    We choose the *minimum* headcount that keeps every person's onsite days <= window.
-
-    Training assignment heuristic:
-      - Prefer assigning training to the currently *most-loaded* person that can still accept a day
-        without exceeding the window (keeps extra people from traveling and mirrors reality).
-      - If none can accept, fall back to the least-loaded person (best-effort).
-    Returns a list of total onsite days per person (sorted descending).
+    Only Technician rows are used for grouping tech-only model crews.
+    RPC models are intentionally excluded from this matrix logic elsewhere.
     """
-    install_days_per_machine = int(install_days_per_machine or 0)
-    qty = int(qty or 0)
-    training_days = int(training_days or 0)
-    window = int(window or 0)
 
-    if window <= 0:
-        return []
-    if qty <= 0 and training_days <= 0:
-        return []
+    def __init__(self, path: Path | None):
+        self.path = path
+        self._loaded = False
+        self.models: set[str] = set()
+        # tech -> model -> level (int)
+        self.scores: dict[str, dict[str, int]] = {}
 
-    # If there is no install work, allocate training only.
-    if qty <= 0 or install_days_per_machine <= 0:
-        headcount = ceil_int(training_days / window) if training_days > 0 else 0
-        loads = balanced_allocate(training_days, headcount) if headcount > 0 else []
-        return loads
+    @staticmethod
+    def _parse_level(v) -> int | None:
+        if v is None:
+            return None
+        s = str(v).strip().upper()
+        if not s:
+            return None
+        m = re.match(r"^T\s*(\d+)$", s)
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
 
-    max_headcount = max(1, qty)  # at most one machine per person
-    for headcount in range(1, max_headcount + 1):
-        # Distribute whole machines as evenly as possible.
-        base_n = qty // headcount
-        rem = qty % headcount
-        machine_counts = [base_n + (1 if i < rem else 0) for i in range(headcount)]
-        loads = [c * install_days_per_machine for c in machine_counts]
+    def _load_new_format(self, ws) -> bool:
+        # Header row
+        header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+        # Find required columns
+        try:
+            idx_type = header.index("Resource Type")
+            idx_name = header.index("Resource")
+        except ValueError:
+            return False
 
-        # Assign training days as 1-day chunks.
-        for _ in range(training_days):
-            # Prefer adding to the most-loaded person who can still accept 1 day within window.
-            candidates = [i for i, d in enumerate(loads) if d + 1 <= window]
-            if candidates:
-                i = max(candidates, key=lambda j: loads[j])
-            else:
-                i = int(np.argmin(loads))
-            loads[i] += 1
+        first_model_col = max(idx_type, idx_name) + 1
+        model_headers = []
+        for j in range(first_model_col, len(header)):
+            h = header[j].strip()
+            if h:
+                model_headers.append((j, h))
 
-        if max(loads) <= window:
-            loads.sort(reverse=True)
-            return loads
+        if not model_headers:
+            return False
 
-    # Best-effort fallback (should generally be prevented by validation).
-    loads = [install_days_per_machine] * qty
-    for _ in range(training_days):
-        i = int(np.argmin(loads))
-        loads[i] += 1
-    loads.sort(reverse=True)
-    return loads
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            rtype = row[idx_type] if idx_type < len(row) else None
+            name = row[idx_name] if idx_name < len(row) else None
+            if not rtype or not name:
+                continue
+            if str(rtype).strip().lower() != "technician":
+                continue
 
-@dataclass
+            tech = str(name).strip()
+            if not tech:
+                continue
+            tech_scores: dict[str, int] = {}
+
+            for j, model in model_headers:
+                v = row[j] if j < len(row) else None
+                lvl = self._parse_level(v)
+                if lvl is None:
+                    continue
+                tech_scores[model] = lvl
+                self.models.add(model)
+
+            if tech_scores:
+                self.scores[tech] = tech_scores
+
+        return True
+
+    def _load_legacy_format(self, ws) -> None:
+        # Legacy: row1 model names from col B; col A tech name
+        header = [c.value for c in ws[1]]
+        models = []
+        for c in header[1:]:
+            if c is None:
+                continue
+            m = str(c).strip()
+            if m:
+                models.append(m)
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            tech_name = row[0]
+            if not tech_name:
+                continue
+            tech = str(tech_name).strip()
+            tech_scores: dict[str, int] = {}
+            for i, model in enumerate(models, start=1):
+                if i >= len(row):
+                    continue
+                lvl = self._parse_level(row[i])
+                if lvl is None:
+                    continue
+                tech_scores[model] = lvl
+                self.models.add(model)
+            if tech_scores:
+                self.scores[tech] = tech_scores
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+
+        if not self.path or not self.path.exists():
+            return
+
+        try:
+            wb = load_workbook(self.path, data_only=True)
+            ws = wb.active
+        except Exception:
+            return
+
+        # Try new format first; fall back to legacy
+        if not self._load_new_format(ws):
+            self._load_legacy_format(ws)
+
+    def group_ok(self, models: list[str], min_t3: int = 2, min_t2: int = 1) -> bool:
+        """
+        Returns True if there exists a single TECH crew that can cover ALL of the given models
+        using the rules Brandon outlined:
+          - at least 2 techs at T3 across ALL selected models
+          - at least 1 tech at >=T2 across ALL selected models
+        """
+        self._load()
+        if not models:
+            return True
+
+        # Exclude models not present in matrix (those must be treated as "non-qualifying")
+        # If any are missing, the caller will not group them; but be defensive here:
+        if any(m not in self.models for m in models):
+            return False
+
+        # Determine which techs qualify for all models at each threshold
+        t3_ok = 0
+        t2_ok = 0
+
+        for tech, scores in self.scores.items():
+            # Missing model rating => not qualified for grouping
+            if any(m not in scores for m in models):
+                continue
+            # Tech must meet threshold across ALL models
+            min_lvl = min(scores[m] for m in models)
+            if min_lvl >= 3:
+                t3_ok += 1
+            if min_lvl >= 2:
+                t2_ok += 1
+
+        return (t3_ok >= min_t3) and (t2_ok >= min_t2)
 class ModelInfo:
     item: str
     tech_install_days_per_machine: int   # install-only (no training baked in)
@@ -338,162 +389,37 @@ class ExcelData:
         raise KeyError(f"Rate not found for '{key}'")
 
 
+    def get(self, *args):
+        """Compatibility helper.
 
-class SkillsMatrix:
-    """Loads the technician/engineer qualification matrix used for crew-grouping decisions."""
-
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        self.tech_rows: list[tuple[str, dict[str, int]]] = []  # (name, {model: rating_int})
-        self.model_cols: set[str] = set()
-        self._loaded = False
-        self._load()
-
-    @staticmethod
-    def _rating_to_int(v) -> int:
-        if v is None:
-            return 0
-        s = str(v).strip().upper()
-        if not s:
-            return 0
-        m = re.match(r"T\s*([0-9]+)", s)
-        if not m:
-            return 0
-        try:
-            return int(m.group(1))
-        except Exception:
-            return 0
-
-    def _load(self):
-        if not self.path.exists():
-            return
-        wb = load_workbook(self.path, data_only=True)
-        ws = wb.active
-
-        # Header row: expect at least 'Resource Type' and 'Resource' then model columns
-        header = []
-        for c in range(1, ws.max_column + 1):
-            header.append(str(ws.cell(row=1, column=c).value or "").strip())
-
-        if len(header) < 3:
-            return
-
-        # Column indices
-        col_resource_type = 1
-        col_resource = 2
-
-        model_cols = []
-        for idx, name in enumerate(header[2:], start=3):
-            if name:
-                model_cols.append((idx, name))
-                self.model_cols.add(name)
-
-        for r in range(2, ws.max_row + 1):
-            rtype = str(ws.cell(row=r, column=col_resource_type).value or "").strip().lower()
-            rname = str(ws.cell(row=r, column=col_resource).value or "").strip()
-            if not rtype:
-                continue
-            # Only technicians drive grouping logic right now
-            if rtype != "technician":
-                continue
-
-            ratings: dict[str, int] = {}
-            for col_idx, model in model_cols:
-                val = ws.cell(row=r, column=col_idx).value
-                rating = self._rating_to_int(val)
-                if rating:
-                    ratings[model] = rating
-            self.tech_rows.append((rname or f"Tech {len(self.tech_rows)+1}", ratings))
-
-        self._loaded = True
-
-    def has_model(self, model: str) -> bool:
-        return model in self.model_cols
-
-    def can_group_tech_models(self, models: list[str]) -> bool:
-        """Return True if there exist >=2 techs with >=T3 on all models AND >=3 techs with >=T2 on all models."""
-        if not self._loaded:
-            return False
-        if not models:
-            return True
-        need = set(models)
-
-        ge3 = 0
-        ge2 = 0
-        for _, ratings in self.tech_rows:
-            ok2 = True
-            ok3 = True
-            for m in need:
-                v = ratings.get(m, 0)
-                if v < 2:
-                    ok2 = False
-                    ok3 = False
-                    break
-                if v < 3:
-                    ok3 = False
-            if ok2:
-                ge2 += 1
-            if ok3:
-                ge3 += 1
-        return (ge3 >= 2) and (ge2 >= 3)
-
-
-def _binpack_chunks(chunks: list[tuple[str, float]], capacity: float):
-    """Greedy bin-pack chunks (model, days) into people with max 'capacity' days.
-    Returns list of dicts: [{'load': x, 'by_model': {model: days}}]
-    """
-    people: list[dict] = []
-    if capacity <= 0:
-        capacity = float("inf")
-
-    # Largest-first helps avoid over-allocations.
-    chunks_sorted = sorted(chunks, key=lambda t: float(t[1]), reverse=True)
-
-    for model, days in chunks_sorted:
-        days = float(days)
-        placed_idx = None
-        best_load = None
-        for i, p in enumerate(people):
-            if p["load"] + days <= capacity + 1e-9:
-                if best_load is None or p["load"] < best_load:
-                    placed_idx = i
-                    best_load = p["load"]
-        if placed_idx is None:
-            people.append({"load": days, "by_model": {model: days}})
+        Supports:
+          - get(section, key)
+          - get(section, key, default)
+          - get(key)  (tries common rate keys)
+        """
+        if len(args) == 1:
+            key = args[0]
+            # try common places
+            for sec in ("Service Rates", "Rates", "rates"):
+                if sec in self.rates and key in self.rates[sec]:
+                    return self.rates[sec][key]
+            # flat scan
+            for sec, d in self.rates.items():
+                if key in d:
+                    return d[key]
+            raise KeyError(key)
+        elif len(args) == 2:
+            section, key = args
+            if section in self.rates:
+                return self.rates[section].get(key)
+            raise KeyError(section)
+        elif len(args) == 3:
+            section, key, default = args
+            if section in self.rates:
+                return self.rates[section].get(key, default)
+            return default
         else:
-            p = people[placed_idx]
-            p["load"] += days
-            p["by_model"][model] = p["by_model"].get(model, 0.0) + days
-
-    return people
-
-
-def _greedy_merge_groups(models: list[str], can_merge_fn):
-    """Start with each model separate, greedily merge while predicate allows."""
-    groups = [[m] for m in models]
-    if len(groups) <= 1:
-        return groups
-
-    while True:
-        best = None  # (score, i, j)
-        for i in range(len(groups)):
-            for j in range(i + 1, len(groups)):
-                merged = groups[i] + groups[j]
-                if can_merge_fn(merged):
-                    score = len(merged)
-                    if best is None or score > best[0]:
-                        best = (score, i, j)
-        if best is None:
-            break
-        _, i, j = best
-        newg = groups[i] + groups[j]
-        groups = [g for k, g in enumerate(groups) if k not in (i, j)]
-        groups.append(newg)
-    # Keep deterministic ordering
-    groups = [sorted(g) for g in groups]
-    groups.sort(key=lambda g: (len(g), g))
-    return groups
-
+            raise TypeError("ExcelData.get() expects 1 to 3 arguments")
 
 class MachineLine(QFrame):
     def __init__(self, models: List[str], training_applicable_map: Dict[str, bool], on_change, on_delete):
@@ -655,6 +581,7 @@ class MainWindow(QMainWindow):
         self.data = ExcelData(DEFAULT_EXCEL)
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
+        self.qual = QualificationMatrix.try_load()
         self.lines: List[MachineLine] = []
 
         central_container = QWidget()
@@ -1012,398 +939,210 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Excel load error", str(e))
 
     def calc(self):
-        selections = [ln.value() for ln in self.lines]
-        selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
-        if not selections:
-            raise ValueError("No machines selected. Click “Add Machine” to begin.")
+        selections = [ln.value() for ln in self.lines if ln.value().model and ln.value().qty > 0]
 
         window = int(self.spin_window.value())
+        if window <= 0:
+            window = 1
 
+        # Rates come from the bundled Excel "Service Rates" tab.
+        # Older drafts used editable spin-box controls (spin_tech_rate/spin_eng_rate
+        # and travel-in/out). Those controls are not part of the current UI, so
+        # we read rates directly from the workbook and default travel-in/out to 1 day
+        # each when travel is required.
+        tech_day_rate = float(self.data.get_rate("Tech. Regular Time", 155.0))
+        eng_day_rate = float(self.data.get_rate("Eng. Regular Time", 206.0))
 
-        install_window = window
-        tech_hr, _ = self.data.get_rate("tech. regular time")
-        eng_hr, _ = self.data.get_rate("eng. regular time")
-        hours_per_day = 8
-        tech_day_rate = tech_hr * hours_per_day
-        eng_day_rate = eng_hr * hours_per_day
+        travel_in = 1
+        travel_out = 1
 
-        
+        qual = getattr(self, "qual", None)
+
+        def training_days_for(sel: Selection) -> int:
+            if not self.training_app_map.get(sel.model, False):
+                return 0
+            if not sel.training_required:
+                return 0
+            return int(math.ceil(sel.qty / 3.0))
+
+        # -------------------------------------------------
+        # TECHNICIAN ALLOCATION (with qualification grouping)
+        # -------------------------------------------------
+        model_to_tech_hc: dict[str, int] = {}
+        tech_days_per_person: dict[int, int] = {}
+        tech_next_id = 1
+        assignments: list[Assignment] = []
+
+        # Categorize selections
+        rpc_sels = [s for s in selections if s.model.upper().startswith("RPC")]
+        eng_required_sels = [s for s in selections if (not s.model.upper().startswith("RPC")) and float(self.data.models[s.model].engineer_days_per_machine) > 0.0]
+        tech_only_sels = [s for s in selections if (not s.model.upper().startswith("RPC")) and float(self.data.models[s.model].engineer_days_per_machine) <= 0.0]
+
+        matrix_sels = [s for s in tech_only_sels if qual and (s.model in getattr(qual, "models", set()))]
+        universal_sels = [s for s in tech_only_sels if (not qual) or (s.model not in getattr(qual, "models", set()))]
+
+        def tech_workload(sel: Selection) -> int:
+            d = self.data.models[sel.model]
+            base = int(sel.qty * float(d.technician_days_per_machine))
+            return int(base + (training_days_for(sel) if base > 0 else 0))
+
+        # Greedy grouping among matrix-covered tech-only models
+        groups: list[list[Selection]] = []
+        if qual and matrix_sels:
+            for s in sorted(matrix_sels, key=lambda x: -tech_workload(x)):
+                placed = False
+                for g in groups:
+                    if qual.group_ok([x.model for x in g] + [s.model]):
+                        g.append(s)
+                        placed = True
+                        break
+                if not placed:
+                    groups.append([s])
+        else:
+            groups = [[s] for s in matrix_sels]
+
+        # If we only have "universal" tech-only items, keep them on a single existing crew
+        if not groups and universal_sels:
+            groups = [[]]
+
+        # Distribute universal tech-only items across existing groups to avoid spawning new crews
+        group_loads = [sum(tech_workload(s) for s in g) for g in groups]
+        for s in sorted(universal_sels, key=lambda x: -tech_workload(x)):
+            if not groups:
+                groups = [[]]
+                group_loads = [0]
+            idx = min(range(len(groups)), key=lambda i: group_loads[i])
+            groups[idx].append(s)
+            group_loads[idx] += tech_workload(s)
+
+        def allocate_group(label: str, sels_in_group: list[Selection]):
+            nonlocal tech_next_id
+            total_days = sum(tech_workload(s) for s in sels_in_group)
+            if total_days <= 0:
+                return
+            headcount = max(1, int(math.ceil(total_days / float(window))))
+            days_list = balanced_allocate(int(total_days), headcount)
+            for i, d in enumerate(days_list, start=1):
+                tech_days_per_person[tech_next_id] = int(d)
+                assignments.append(Assignment(label, "Technician", tech_next_id, int(d), float(d) * tech_day_rate))
+                tech_next_id += 1
+            for s in sels_in_group:
+                model_to_tech_hc[s.model] = headcount
+
+        # Allocate grouped tech-only crews
+        for gi, g in enumerate(groups):
+            if not g:
+                continue
+            label_models = ", ".join(sorted({s.model for s in g}))
+            allocate_group(f"Tech Crew {gi+1} ({label_models})", g)
+
+        # Allocate RPC tech crew as its own group (robot cell skillset)
+        if rpc_sels:
+            label_models = ", ".join(sorted({s.model for s in rpc_sels}))
+            allocate_group(f"Robot Cell Crew (Tech) ({label_models})", rpc_sels)
+
+        # Allocate technician workload for engineer-required non-RPC models (separate)
+        for s in eng_required_sels:
+            if s.model in model_to_tech_hc:
+                continue
+            allocate_group(f"{s.model} (Tech)", [s])
+
+        # -------------------------------------------------
+        # ENGINEER ALLOCATION (RPC-C and RPC-DF share crew)
+        # -------------------------------------------------
+        model_to_eng_hc: dict[str, int] = {}
+        eng_days_per_person: dict[int, int] = {}
+        eng_next_id = 1
+
+        def eng_workload(sel: Selection) -> int:
+            d = self.data.models[sel.model]
+            base = int(sel.qty * float(d.engineer_days_per_machine))
+            if base <= 0:
+                return 0
+            return int(base + training_days_for(sel))
+
+        def allocate_eng_group(label: str, sels_in_group: list[Selection]):
+            nonlocal eng_next_id
+            total_days = sum(eng_workload(s) for s in sels_in_group)
+            if total_days <= 0:
+                return
+            headcount = max(1, int(math.ceil(total_days / float(window))))
+            days_list = balanced_allocate(int(total_days), headcount)
+            for i, d in enumerate(days_list, start=1):
+                eng_days_per_person[eng_next_id] = int(d)
+                assignments.append(Assignment(label, "Engineer", eng_next_id, int(d), float(d) * eng_day_rate))
+                eng_next_id += 1
+            for s in sels_in_group:
+                model_to_eng_hc[s.model] = headcount
+
+        if rpc_sels:
+            label_models = ", ".join(sorted({s.model for s in rpc_sels}))
+            allocate_eng_group(f"Robot Cell Crew (Eng) ({label_models})", rpc_sels)
+
+        for s in eng_required_sels:
+            if s.model in model_to_eng_hc:
+                allocate_eng_group(f"{s.model} (Eng)", [s])  # still make sure we count it
+            else:
+                allocate_eng_group(f"{s.model} (Eng)", [s])
+
+        # -------------------------------------------------
+        # Build machine breakdown rows (per selection/model)
+        # -------------------------------------------------
         machine_rows = []
-        assignments = []
-        labor_total = 0.0
-
-        # --- Skills matrix (for grouping tech-only models)
-        sm = getattr(self, "_skills_matrix", None)
-        if sm is None:
-            sm_path = resolve_assets_dir() / "Machine Qualifications for PCP Quoting.xlsx"
-            try:
-                sm = SkillsMatrix(sm_path)
-            except Exception:
-                sm = None
-            self._skills_matrix = sm
-
-        robot_models = {"RPC-C", "RPC-DF"}
-
-        # Partition selections
-        robot_sel = [s for s in selections if s.model in robot_models]
-        non_robot_sel = [s for s in selections if s.model not in robot_models]
-
-        # Helper: total tech days for a selection (onsite only; travel handled elsewhere)
-        def _sel_tech_total_days(sel: LineSelection, mi: ModelInfo) -> float:
-            base_training = (1.0 if (sel.training_required and mi.training_applicable) else 0.0)
-            return float(mi.tech_install_days_per_machine) * float(sel.qty) + base_training
-
-        # Build tech-only groups using the skills matrix:
-        tech_only = []
-        non_groupable = []  # tech-only models that should not drive grouping (conv, support, etc)
-        for s in non_robot_sel:
-            mi = self.data.models.get(s.model)
-            if not mi:
-                continue
-            if float(mi.eng_days_per_machine) > 0:
-                continue
-            if sm and sm.has_model(s.model):
-                tech_only.append(s)
-            else:
-                non_groupable.append(s)
-
-        core_models = sorted({s.model for s in tech_only})
-
-        groups_models = _greedy_merge_groups(
-            core_models,
-            (lambda ms: sm.can_group_tech_models(ms) if sm else False)
-        )
-
-        # Convert model-groups to selection-groups
-        sel_groups: list[dict] = []
-        for gm in groups_models:
-            sel_groups.append({"models": gm, "sels": [s for s in tech_only if s.model in gm], "tech_days": 0.0})
-
-        # If nothing is groupable but we have tech-only work, make a single "bucket" so non-groupable can land there.
-        if not sel_groups and (tech_only or non_groupable):
-            sel_groups.append({"models": [], "sels": [], "tech_days": 0.0})
-
-        # Distribute non-groupable tech-only items across existing tech-only groups to avoid spawning new crews.
-        for s in non_groupable:
-            if not sel_groups:
-                sel_groups.append({"models": [], "sels": [], "tech_days": 0.0})
-            # choose the group with the smallest current tech_days
-            mi = self.data.models.get(s.model)
-            if not mi:
-                continue
-            best = min(sel_groups, key=lambda g: g["tech_days"])
-            best["sels"].append(s)
-            best["tech_days"] += _sel_tech_total_days(s, mi)
-
-        # --- Allocate technicians for tech-only groups (shared crews)
-        next_tech_id = 1
-        tech_days_per_person: dict[int, float] = {}
-
-        for g in sel_groups:
-            if not g["sels"]:
-                continue
-
-            chunks: list[tuple[str, float]] = []
-            for s in g["sels"]:
-                mi = self.data.models.get(s.model)
-                if not mi:
-                    continue
-
-                # install chunks (per-machine)
-                for _ in range(int(s.qty)):
-                    chunks.append((s.model, float(mi.tech_install_days_per_machine)))
-
-                # training (one-day chunk if enabled/applicable)
-                if s.training_required and mi.training_applicable:
-                    chunks.append((s.model, 1.0))
-
-            people = _binpack_chunks(chunks, float(install_window))
-            group_ids = list(range(next_tech_id, next_tech_id + len(people)))
-            next_tech_id += len(people)
-
-            # By-model days per person -> Assignment rows
-            for pid, person in zip(group_ids, people):
-                tech_days_per_person[pid] = float(person["load"])
-                for model, days in person["by_model"].items():
-                    if days <= 0:
-                        continue
-                    cost = float(days) * float(tech_day_rate)
-                    labor_total += cost
-                    assignments.append(Assignment(model=model, role="Tech", person_num=pid, onsite_days=float(days), cost=cost))
-
-        # --- Allocate non-tech-only work (engineer work, plus RPC)
-        # These are always treated as their own dedicated crews per model (except RPC-C and RPC-DF share).
-        # Engineer numbering is global to avoid collisions with multi-row grouped assignments.
-        next_eng_id = 1
-        eng_days_per_person: dict[int, float] = {}
-
-        def _alloc_engineer_for_models(shared_sels: list[LineSelection], share_label_models: set[str]):
-            nonlocal next_eng_id, labor_total
-            if not shared_sels:
-                return
-
-            # engineer chunks across shared models
-            eng_chunks: list[tuple[str, float]] = []
-            for s in shared_sels:
-                mi = self.data.models.get(s.model)
-                if not mi:
-                    continue
-                # engineer onsite is per machine as a single chunk per machine day block
-                for _ in range(int(s.qty)):
-                    if float(mi.eng_days_per_machine) > 0:
-                        eng_chunks.append((s.model, float(mi.eng_days_per_machine)))
-            if not eng_chunks:
-                return
-            eng_people = _binpack_chunks(eng_chunks, float(install_window))
-            eng_ids = list(range(next_eng_id, next_eng_id + len(eng_people)))
-            next_eng_id += len(eng_people)
-
-            for pid, person in zip(eng_ids, eng_people):
-                eng_days_per_person[pid] = float(person["load"])
-                for model, days in person["by_model"].items():
-                    if days <= 0:
-                        continue
-                    cost = float(days) * float(eng_rate)
-                    labor_total += cost
-                    assignments.append(Assignment(model=model, role="Eng", person_num=pid, onsite_days=float(days), cost=cost))
-
-        # RPC group (RPC-C + RPC-DF share)
-        _alloc_engineer_for_models(robot_sel, robot_models)
-
-        # Non-robot engineered models (if any) allocate per model
-        for s in non_robot_sel:
-            mi = self.data.models.get(s.model)
-            if not mi:
-                continue
-            if float(mi.eng_days_per_machine) <= 0:
-                continue
-            if s.model in robot_models:
-                continue
-            # per-model: independent engineer crew
-            _alloc_engineer_for_models([s], {s.model})
-
-        # --- Machine rows (summary per model)
-        # Compute per-model days/headcounts from assignments (shared tech IDs possible).
-        model_to_qty = {}
         for s in selections:
-            model_to_qty[s.model] = model_to_qty.get(s.model, 0) + int(s.qty)
+            d = self.data.models[s.model]
+            base_training = training_days_for(s)
 
-        # per-model tech/eng totals and headcounts from assignments
-        tech_by_model = {}
-        eng_by_model = {}
-        tech_people_by_model = {}
-        eng_people_by_model = {}
+            base_tech = int(s.qty * float(d.technician_days_per_machine))
+            base_eng = int(s.qty * float(d.engineer_days_per_machine))
 
-        for a in assignments:
-            if a.role == "Tech":
-                tech_by_model[a.model] = tech_by_model.get(a.model, 0.0) + float(a.onsite_days)
-                tech_people_by_model.setdefault(a.model, set()).add(a.person_num)
+            tech_total = base_tech + (base_training if base_tech > 0 else 0)
+            eng_total = base_eng + (base_training if base_eng > 0 else 0)
+
+            if self.training_app_map.get(s.model, False):
+                if s.training_required:
+                    s_train = f"(incl. {base_training} Train)"
+                else:
+                    s_train = "(training excluded)"
             else:
-                eng_by_model[a.model] = eng_by_model.get(a.model, 0.0) + float(a.onsite_days)
-                eng_people_by_model.setdefault(a.model, set()).add(a.person_num)
+                s_train = ""
 
-        for s in selections:
-            mi = self.data.models.get(s.model)
-            if not mi:
-                continue
+            tech_hc = int(model_to_tech_hc.get(s.model, math.ceil(tech_total / float(window)) if tech_total else 0))
+            eng_hc = int(model_to_eng_hc.get(s.model, math.ceil(eng_total / float(window)) if eng_total else 0))
 
-            # Training label logic
-            base_training = (1.0 if (s.training_required and mi.training_applicable) else 0.0)
-            tech_days_total = float(mi.tech_install_days_per_machine) * float(s.qty) + base_training
-            eng_days_total = float(mi.eng_days_per_machine) * float(s.qty)
+            machine_rows.append((
+                s.model,
+                s.qty,
+                f"{tech_total} {s_train}".strip(),
+                tech_hc,
+                (f"{eng_total} {s_train}".strip() if eng_total else ""),
+                eng_hc
+            ))
 
-            tech_hc = len(tech_people_by_model.get(s.model, set())) or 0
-            eng_hc = len(eng_people_by_model.get(s.model, set())) or 0
+        tech_all = list(tech_days_per_person.values())
+        eng_all = list(eng_days_per_person.values())
 
-            machine_rows.append(
-                MachineRow(
-                    model=s.model,
-                    qty=int(s.qty),
-                    tech_days_total=float(tech_days_total),
-                    tech_headcount=int(tech_hc),
-                    eng_days_total=float(eng_days_total),
-                    eng_headcount=int(eng_hc),
-                    training_applicable=bool(mi.training_applicable),
-                    training_required=bool(s.training_required),
-                )
-            )
+        tech = RoleTotals(len(tech_all), sum(tech_all), tech_all, tech_day_rate, sum(float(d) * tech_day_rate for d in tech_all))
+        eng = RoleTotals(len(eng_all), sum(eng_all), eng_all, eng_day_rate, sum(float(d) * eng_day_rate for d in eng_all))
 
-        # Sort machine rows consistently
-        machine_rows.sort(key=lambda r: (r.model or ""))
+        # -------------------------------------------------
+        # Expenses
+        # -------------------------------------------------
+        trip_days_by_person = {a.person_id: (travel_in + travel_out) for a in assignments}
+        expenses_rows, expenses_total = self.expenses_calc(len(assignments), travel_in, travel_out)
 
-        # Unique people totals (used for travel/hotel/per-diem calcs)
-        people_totals = {}
-        for a in assignments:
-            key = (a.role, a.person_num)
-            people_totals[key] = people_totals.get(key, 0.0) + float(a.onsite_days)
-
-        n_people = len(people_totals)
-        trip_days_by_person = [d + TRAVEL_DAYS_PER_PERSON for d in people_totals.values()]
-        n_people = len(trip_days_by_person)
-        total_trip_days = sum(trip_days_by_person)
-        total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
-
-
-        exp_lines: List[ExpenseLine] = []
-
-        def add_exp(name, qty, unit, detail):
-            exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
-
-        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
-        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
-
-        parking, _ = self.data.get_rate("parking")
-        car, _ = self.data.get_rate("car rental")
-        hotel, _ = self.data.get_rate("hotel")
-        per_diem, _ = self.data.get_rate("per diem weekday")
-        prep, _ = self.data.get_rate("pre/post trip prep")
-        travel_time_rate, _ = self.data.get_rate("travel time")
-
-        add_exp("Car Rental", total_trip_days, car, f"{int(total_trip_days)} day(s) × {money(car)}")
-        add_exp("Parking", total_trip_days, parking, f"{int(total_trip_days)} day(s) × {money(parking)}")
-        add_exp("Hotel", total_hotel_nights, hotel, f"{int(total_hotel_nights)} night(s) × {money(hotel)}")
-        add_exp("Per Diem", total_trip_days, per_diem, f"{int(total_trip_days)} day(s) × {money(per_diem)}")
-        add_exp("Pre/Post Trip Prep", n_people, prep, f"{n_people} person(s) × {money(prep)}")
-        travel_hours = 16 * n_people
-        add_exp("Travel Time", travel_hours, travel_time_rate, f"{travel_hours} hr(s) × {money(travel_time_rate)}/hr")
-
-        exp_total = sum(l.extended for l in exp_lines)
-        max_onsite = max([a.onsite_days for a in assignments], default=0)
-        grand_total = exp_total + tech.labor_cost + eng.labor_cost
+        labor_lines = [(a.role, a.person_label(), a.days, a.cost) for a in assignments]
+        exp_lines = [(a.role, a.person_label(), trip_days_by_person.get(a.person_id, 0)) for a in assignments]
 
         meta = {
             "machine_rows": machine_rows,
-            "assignments": assignments,
-            "window": window,
-            "max_onsite": max_onsite,
-            "n_people": n_people,
-            "total_trip_days": total_trip_days,
-            "exp_total": exp_total,
-            "grand_total": grand_total
+            "assignments": exp_lines,
+            "labor_lines": labor_lines,
+            "expenses_rows": expenses_rows,
+            "expenses_total": float(expenses_total),
         }
+
         return tech, eng, exp_lines, meta
-
-
-    def _autosize_table_height(self, tbl, visible_rows=None, max_height=520):
-        """Resize table height to fit contents (optionally cap by visible row count) to avoid inner scrolling."""
-        try:
-            tbl.resizeRowsToContents()
-            header_h = tbl.horizontalHeader().height()
-            frame = tbl.frameWidth() * 2
-            total = header_h + frame + 12
-            n = tbl.rowCount()
-            if visible_rows is not None:
-                n = min(n, int(visible_rows))
-            for r in range(n):
-                total += tbl.rowHeight(r)
-            total = min(total, max_height)
-            tbl.setMinimumHeight(total)
-            tbl.setMaximumHeight(total)
-        except Exception:
-            pass
-
-
-    
-    
-    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-        """Polished horizontal stacked bar chart of onsite + travel days by person."""
-        labels: List[str] = []
-        tech_vals: List[int] = []
-        eng_vals: List[int] = []
-
-        for d in tech.onsite_days_by_person:
-            labels.append(f"T{len(tech_vals)+1}")
-            tech_vals.append(int(d))
-
-        for d in eng.onsite_days_by_person:
-            labels.append(f"E{len(eng_vals)+1}")
-            eng_vals.append(int(d))
-
-        self.chart.removeAllSeries()
-        self.chart.setTitle("Workload (days)")
-        self.chart.setBackgroundRoundness(8)
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
-
-        if len(labels) == 0:
-            return
-
-        # Colors (match UI theme)
-        tech_color = QColor("#e04426")  # Tech bar
-        eng_color = QColor("#6790a0")   # Engineer bar
-        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
-        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
-
-        series = QHorizontalStackedBarSeries()
-
-        set_tech_on = QBarSet("Tech")
-        set_tech_tr = QBarSet("Tech travel")
-        set_eng_on = QBarSet("Eng")
-        set_eng_tr = QBarSet("Eng travel")
-
-        set_tech_on.setColor(tech_color)
-        set_tech_tr.setColor(tech_travel)
-        set_eng_on.setColor(eng_color)
-        set_eng_tr.setColor(eng_travel)
-
-        n = len(labels)
-        # Build arrays aligned to labels: first tech people then engineer people
-        for i in range(n):
-            is_tech = labels[i].startswith("T")
-            if is_tech:
-                v = tech_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-                set_eng_on.append(0.0)
-                set_eng_tr.append(0.0)
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(0.0)
-                set_tech_tr.append(0.0)
-                set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-
-        series.append(set_tech_on)
-        series.append(set_tech_tr)
-        series.append(set_eng_on)
-        series.append(set_eng_tr)
-
-        self.chart.addSeries(series)
-
-        axis_y = QBarCategoryAxis()
-        axis_y.append(labels)
-
-        totals = []
-        for i in range(n):
-            if labels[i].startswith("T"):
-                v = tech_vals[int(labels[i][1:]) - 1]
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
-        max_v = max(totals) if totals else 1
-
-        axis_x = QValueAxis()
-        axis_x.setRange(0, max(1, int(max_v)))
-        axis_x.setLabelFormat("%d")
-        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
-
-        for ax in list(self.chart.axes()):
-            self.chart.removeAxis(ax)
-
-        self.chart.addAxis(axis_y, Qt.AlignLeft)
-        self.chart.addAxis(axis_x, Qt.AlignBottom)
-        series.attachAxis(axis_y)
-        series.attachAxis(axis_x)
-
-        # Labels/legend polish
-        try:
-            series.setLabelsVisible(True)
-            series.setLabelsPosition(series.LabelsInsideEnd)
-            series.setLabelsFormat("@value")
-        except Exception:
-            pass
-
-        self.chart.legend().setVisible(True)
-        self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
         if len(self.lines) == 0:
