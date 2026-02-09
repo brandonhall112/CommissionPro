@@ -1127,7 +1127,7 @@ class MainWindow(QMainWindow):
                 for model, days in person["by_model"].items():
                     if days <= 0:
                         continue
-                    cost = float(days) * float(tech_rate)
+                    cost = float(days) * float(tech_day_rate)
                     labor_total += cost
                     assignments.append(Assignment(model=model, role="Tech", person_num=pid, onsite_days=float(days), cost=cost))
 
