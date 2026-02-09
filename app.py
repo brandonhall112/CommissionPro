@@ -1236,7 +1236,7 @@ class MainWindow(QMainWindow):
             people_totals[key] = people_totals.get(key, 0.0) + float(a.onsite_days)
 
         n_people = len(people_totals)
-trip_days_by_person = [d + TRAVEL_DAYS_PER_PERSON for d in people_totals.values()]
+        trip_days_by_person = [d + TRAVEL_DAYS_PER_PERSON for d in people_totals.values()]
         n_people = len(trip_days_by_person)
         total_trip_days = sum(trip_days_by_person)
         total_hotel_nights = sum(max(d - 1, 0) for d in trip_days_by_person)
