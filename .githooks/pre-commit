@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+
+# Allow emergency bypass by explicit env var.
+if [[ "${ALLOW_NON_MAIN_COMMIT:-}" == "1" ]]; then
+  exit 0
+fi
+
+if [[ "$branch" != "main" ]]; then
+  cat >&2 <<MSG
+ERROR: Commit blocked on branch '$branch'.
+
+This repository is configured to commit only on 'main' to avoid lost work and branch confusion.
+
+Fix:
+  git checkout main
+  git pull --ff-only origin main   # if origin exists
+  git add <files>
+  git commit -m "..."
+
+If you intentionally need another branch, run once:
+  ALLOW_NON_MAIN_COMMIT=1 git commit -m "..."
+MSG
+  exit 1
+fi
