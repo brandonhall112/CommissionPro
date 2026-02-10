@@ -200,3 +200,19 @@ This repository is intended to be packaged as a Windows executable using PyInsta
 
 Publisher: Brandon T. Hall  
 Tool name: Pearson Commissioning Pro
+
+
+## Git safety guard (prevent accidental branch commits)
+
+To prevent accidental commits on non-`main` branches, install the repository hooks once:
+
+```bash
+./scripts/install-git-hooks.sh
+```
+
+After installation, commits on branches other than `main` are blocked by default.
+If you intentionally need a non-`main` commit, you can bypass once with:
+
+```bash
+ALLOW_NON_MAIN_COMMIT=1 git commit -m "..."
+```
