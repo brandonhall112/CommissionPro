@@ -455,6 +455,14 @@ class MachineLine(QFrame):
             return
 
         applicable = bool(self.training_applicable_map.get(model, True))
+        if not applicable:
+            self.chk_training.hide()
+            return
+
+        self.chk_training.show()
+
+    def _model_changed(self, *_):
+        self._set_training_visibility(self.cmb_model.currentText())
         if applicable:
             self.chk_training.show()
         else:
@@ -471,7 +479,6 @@ class MachineLine(QFrame):
         self.on_change()
 
     def _changed(self, *_):
-
         self.on_change()
 
     def _delete(self):
