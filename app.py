@@ -444,14 +444,24 @@ class MachineLine(QFrame):
         row.addWidget(self.btn_delete)
 
         self._model_changed()
-    def _model_changed(self, *_):
-        model = self.cmb_model.currentText().strip()
+
+    def _set_training_visibility(self, model: str):
+        """Show/hide training checkbox without mutating the checked state."""
         if model == "— Select —":
             model = ""
+        model = model.strip()
         if not model:
             self.chk_training.hide()
-            self.chk_training.setChecked(False)
+            return
+
+        applicable = bool(self.training_applicable_map.get(model, True))
+        if applicable:
+            self.chk_training.show()
         else:
+            self.chk_training.hide()
+
+    def _model_changed(self, *_):
+        self._set_training_visibility(self.cmb_model.currentText())
             applicable = bool(self.training_applicable_map.get(model, True))
             if not applicable:
                 self.chk_training.hide()
@@ -937,6 +947,8 @@ class MainWindow(QMainWindow):
                     applicable = bool(ln.training_applicable_map.get(model, True))
                     if not applicable:
                         ln.chk_training.hide()
+                    else:
+                        ln.chk_training.show()
                         ln.chk_training.setChecked(False)
                     else:
                         ln.chk_training.show()
