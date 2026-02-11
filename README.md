@@ -12,7 +12,7 @@ Given a set of machine lines (model + quantity + training selection), the app ca
 - Personnel assignments (balanced by role)
 - Labor costs (regular + overtime)
 - Estimated expenses (airfare, baggage, car, parking, hotel, per diem, prep, travel time)
-- Workload calendar (3-week Sun–Sat Gantt view)
+- Workload calendar (2-week Sun–Sat Gantt view)
 - Print-ready quote preview
 
 ---
@@ -83,7 +83,7 @@ If skills matrix is missing/unreadable, the app falls back to baseline allocatio
 
 ## Workload calendar behavior (left column)
 
-The workload view is a **3-week (21-day) Sun–Sat Gantt calendar**:
+The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
 
 - Rows = personnel (T1, T2, … / E1, E2, …)
 - Columns = day slots

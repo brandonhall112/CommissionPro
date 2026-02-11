@@ -86,7 +86,7 @@ DEFAULT_INSTALL_WINDOW = 7
 MIN_INSTALL_WINDOW = 3
 MAX_INSTALL_WINDOW = 14
 TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
-WORKLOAD_CALENDAR_DAYS = 21  # 3-week calendar horizon (Sun-Sat)
+WORKLOAD_CALENDAR_DAYS = 14  # 2-week calendar horizon (Sun-Sat)
 
 # Requested overrides
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
@@ -725,7 +725,7 @@ class MainWindow(QMainWindow):
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
-        # Workload calendar in Gantt style (3-week Sun-Sat view)
+        # Workload calendar in Gantt style (2-week Sun-Sat view)
         self.tbl_workload_calendar = QTableWidget(6, WORKLOAD_CALENDAR_DAYS)
         self.tbl_workload_calendar.setObjectName("table")
         self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -743,10 +743,10 @@ class MainWindow(QMainWindow):
         ])
         self.tbl_workload_calendar.setMinimumHeight(320)
         self.tbl_workload_calendar.setToolTip(
-            "Gantt trip view (3 weeks): light color = travel day, solid color = onsite day. "
+            "Gantt trip view (2 weeks): light color = travel day, solid color = onsite day. "
             "Tech uses #e04426 and Engineer uses #6790a0."
         )
-        sec_chart = Section("Workload Calendar", "3-week Sun-Sat Gantt trip view.", "🗓️")
+        sec_chart = Section("Workload Calendar", "2-week Sun-Sat Gantt trip view.", "🗓️")
         sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
 
         # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
@@ -1382,13 +1382,13 @@ class MainWindow(QMainWindow):
         )
         for r in range(rows):
             self.tbl_workload_calendar.setRowHeight(r, 26)
-            for c in range(21):
+            for c in range(WORKLOAD_CALENDAR_DAYS):
                 it = QTableWidgetItem("")
                 it.setTextAlignment(Qt.AlignCenter)
                 self.tbl_workload_calendar.setItem(r, c, it)
 
     def _render_workload_calendar(self, tech: RoleTotals, eng: RoleTotals, meta: Dict):
-        """Render a 3-week Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
+        """Render a 2-week Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
 
         # Default assumptions:
         # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
