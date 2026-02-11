@@ -70,7 +70,8 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
+    QTextBrowser, QDialog
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
@@ -603,6 +604,11 @@ class MainWindow(QMainWindow):
         btn_open_bundled.setToolTip("Open the Excel workbook that was bundled into this EXE (for verification).")
         btn_open_bundled.clicked.connect(self.open_bundled_excel)
         h.addWidget(btn_open_bundled)
+
+        btn_help = QPushButton("Help")
+        btn_help.setToolTip("Open the user guide and calculation notes (README).")
+        btn_help.clicked.connect(self.open_help)
+        h.addWidget(btn_help)
         root.addWidget(header)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -1051,6 +1057,57 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
 
+    def _find_readme_path(self) -> Path | None:
+        candidates = [
+            Path(__file__).resolve().parent / "README.md",
+            Path(__file__).resolve().parent.parent / "README.md",
+        ]
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.extend([
+                exe_dir / "README.md",
+                exe_dir / "_internal" / "README.md",
+            ])
+        for p in candidates:
+            try:
+                if p.exists():
+                    return p
+            except Exception:
+                continue
+        return None
+
+    def open_help(self):
+        """Display README guidance in an in-app help dialog."""
+        try:
+            readme_path = self._find_readme_path()
+            if readme_path is not None:
+                text = readme_path.read_text(encoding="utf-8", errors="replace")
+                title = f"Help — {readme_path.name}"
+            else:
+                text = (
+                    "README.md was not found in this build.\n\n"
+                    "This tool estimates commissioning labor, expenses, and total quote values "
+                    "from selected machine models and rate data in Excel."
+                )
+                title = "Help"
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(title)
+            dlg.resize(1000, 760)
+            lay = QVBoxLayout(dlg)
+            viewer = QTextBrowser(dlg)
+            viewer.setOpenExternalLinks(True)
+            if readme_path is not None:
+                try:
+                    viewer.setSearchPaths([str(readme_path.parent)])
+                except Exception:
+                    pass
+            viewer.setMarkdown(text)
+            lay.addWidget(viewer)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Help error", str(e))
+
     def calc(self):
         selections = [ln.value() for ln in self.lines]
         selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
@@ -1217,6 +1274,8 @@ class MainWindow(QMainWindow):
         eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
         tech_ot_hours = tech_weekend_days * hours_per_day
         eng_ot_hours = eng_weekend_days * hours_per_day
+        tech_ot_day_rate = tech_ot_hr * hours_per_day
+        eng_ot_day_rate = eng_ot_hr * hours_per_day
 
         tech_regular_cost = float(tech_regular_days) * tech_day_rate
         eng_regular_cost = float(eng_regular_days) * eng_day_rate
@@ -1275,6 +1334,10 @@ class MainWindow(QMainWindow):
             "eng_ot_hours": eng_ot_hours,
             "tech_ot_rate": tech_ot_hr,
             "eng_ot_rate": eng_ot_hr,
+            "tech_ot_days": tech_weekend_days,
+            "eng_ot_days": eng_weekend_days,
+            "tech_ot_day_rate": tech_ot_day_rate,
+            "eng_ot_day_rate": eng_ot_day_rate,
             "tech_ot_cost": tech_ot_cost,
             "eng_ot_cost": eng_ot_cost,
         }
@@ -1438,9 +1501,9 @@ class MainWindow(QMainWindow):
             self.tbl_labor.setRowCount(5)
             labor_rows = [
                 ("Tech. Regular Time", money(tech.day_rate) + "/day", str(meta.get("tech_regular_days", tech.total_onsite_days)), str(tech.headcount), money((meta.get("tech_regular_days", tech.total_onsite_days)) * tech.day_rate)),
-                ("Tech. Overtime (Sat/Sun)", money(meta.get("tech_ot_rate", 0.0)) + "/hr", str(meta.get("tech_ot_hours", 0)), str(tech.headcount), money(meta.get("tech_ot_cost", 0.0))),
+                ("Tech. Overtime (Sat/Sun)", money(meta.get("tech_ot_day_rate", 0.0)) + "/day", str(meta.get("tech_ot_days", 0)), str(tech.headcount), money(meta.get("tech_ot_cost", 0.0))),
                 ("Eng. Regular Time", money(eng.day_rate) + "/day", str(meta.get("eng_regular_days", eng.total_onsite_days)), str(eng.headcount), money((meta.get("eng_regular_days", eng.total_onsite_days)) * eng.day_rate)),
-                ("Eng. Overtime (Sat/Sun)", money(meta.get("eng_ot_rate", 0.0)) + "/hr", str(meta.get("eng_ot_hours", 0)), str(eng.headcount), money(meta.get("eng_ot_cost", 0.0))),
+                ("Eng. Overtime (Sat/Sun)", money(meta.get("eng_ot_day_rate", 0.0)) + "/day", str(meta.get("eng_ot_days", 0)), str(eng.headcount), money(meta.get("eng_ot_cost", 0.0))),
             ]
             for r_i, row in enumerate(labor_rows):
                 for c, v in enumerate(row):
@@ -1599,9 +1662,9 @@ class MainWindow(QMainWindow):
             <table class="grid">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
                 <tr><td>Tech. Regular Time ({meta.get("tech_regular_days", tech.total_onsite_days)} days × {money(tech.day_rate)}/day)</td><td class="right">{money(meta.get("tech_regular_days", tech.total_onsite_days) * tech.day_rate)}</td></tr>
-                <tr><td>Tech. Overtime (Sat/Sun) ({meta.get("tech_ot_hours", 0)} hr × {money(meta.get("tech_ot_rate", 0.0))}/hr)</td><td class="right">{money(meta.get("tech_ot_cost", 0.0))}</td></tr>
+                <tr><td>Tech. Overtime (Sat/Sun) ({meta.get("tech_ot_days", 0)} day × {money(meta.get("tech_ot_day_rate", 0.0))}/day)</td><td class="right">{money(meta.get("tech_ot_cost", 0.0))}</td></tr>
                 <tr><td>Eng. Regular Time ({meta.get("eng_regular_days", eng.total_onsite_days)} days × {money(eng.day_rate)}/day)</td><td class="right">{money(meta.get("eng_regular_days", eng.total_onsite_days) * eng.day_rate)}</td></tr>
-                <tr><td>Eng. Overtime (Sat/Sun) ({meta.get("eng_ot_hours", 0)} hr × {money(meta.get("eng_ot_rate", 0.0))}/hr)</td><td class="right">{money(meta.get("eng_ot_cost", 0.0))}</td></tr>
+                <tr><td>Eng. Overtime (Sat/Sun) ({meta.get("eng_ot_days", 0)} day × {money(meta.get("eng_ot_day_rate", 0.0))}/day)</td><td class="right">{money(meta.get("eng_ot_cost", 0.0))}</td></tr>
                 <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
             </table>
 
