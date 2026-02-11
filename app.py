@@ -482,6 +482,7 @@ class MachineLine(QFrame):
         )
 
 
+
 class Card(QFrame):
     def __init__(self, title: str, icon_text: str):
         super().__init__()
@@ -1340,6 +1341,7 @@ class MainWindow(QMainWindow):
         self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
