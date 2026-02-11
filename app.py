@@ -93,7 +93,15 @@ OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
+SKILLS_MATRIX_EXCEL = ASSETS_DIR / "Machine Qualifications for PCP Quoting.xlsx"
 LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
+
+ROBOT_MODELS = {"RPC-C", "RPC-DF"}
+GENERIC_MODEL_ALIASES = {
+    "CONV",
+    "PRODUCTION SUPPORT DAY",
+    "TRAINING DAY",
+}
 
 
 def ceil_int(x: float) -> int:
@@ -212,6 +220,63 @@ class Assignment:
     person_num: int
     onsite_days: int
     cost: float
+    crew_pool: str = ""
+
+
+class SkillsMatrix:
+    """Technician qualification matrix loader used for tech-only grouping."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.tech_rows: List[Dict[str, str]] = []
+        self.model_headers: set[str] = set()
+        self._load()
+
+    def _load(self):
+        wb = openpyxl.load_workbook(self.path, data_only=True)
+        ws = wb.active
+
+        headers = []
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            headers.append(str(v).strip() if v is not None else "")
+
+        model_cols: Dict[int, str] = {}
+        for idx, name in enumerate(headers, 1):
+            if idx <= 2:
+                continue
+            if name:
+                model_cols[idx] = name
+                self.model_headers.add(name)
+
+        for r in range(2, ws.max_row + 1):
+            resource_type = ws.cell(r, 1).value
+            if str(resource_type).strip().lower() != "technician":
+                continue
+
+            ratings: Dict[str, str] = {}
+            for c, model in model_cols.items():
+                val = ws.cell(r, c).value
+                ratings[model] = str(val).strip().upper() if val is not None else ""
+            self.tech_rows.append(ratings)
+
+    def has_model(self, model: str) -> bool:
+        return model in self.model_headers
+
+    def can_group_models(self, models: List[str]) -> bool:
+        """Rule: >=2 techs with T3 on all models, and >=1 tech with >=T2 on all models."""
+        if not models:
+            return True
+
+        t3_count = 0
+        t2_plus_count = 0
+        for row in self.tech_rows:
+            vals = [row.get(m, "") for m in models]
+            if all(v == "T3" for v in vals):
+                t3_count += 1
+            if all(v in ("T2", "T3") for v in vals):
+                t2_plus_count += 1
+        return t3_count >= 2 and t2_plus_count >= 1
 
 
 class ExcelData:
@@ -379,26 +444,28 @@ class MachineLine(QFrame):
         row.addWidget(self.btn_delete)
 
         self._model_changed()
-    def _model_changed(self, *_):
-        model = self.cmb_model.currentText().strip()
+
+    def _set_training_visibility(self, model: str):
+        """Show/hide training checkbox without mutating checked state."""
         if model == "— Select —":
             model = ""
+        model = model.strip()
         if not model:
             self.chk_training.hide()
-            self.chk_training.setChecked(False)
-        else:
-            applicable = bool(self.training_applicable_map.get(model, True))
-            if not applicable:
-                self.chk_training.hide()
-                self.chk_training.setChecked(False)
-            else:
-                self.chk_training.show()
-                if not self.chk_training.isChecked():
-                    self.chk_training.setChecked(True)
+            return
+
+        applicable = bool(self.training_applicable_map.get(model, True))
+        if not applicable:
+            self.chk_training.hide()
+            return
+
+        self.chk_training.show()
+
+    def _model_changed(self, *_):
+        self._set_training_visibility(self.cmb_model.currentText())
         self.on_change()
 
     def _changed(self, *_):
-
         self.on_change()
 
     def _delete(self):
@@ -499,6 +566,10 @@ class MainWindow(QMainWindow):
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.lines: List[MachineLine] = []
+
+        self.skills_matrix: SkillsMatrix | None = None
+        self.skills_warning = ""
+        self._load_skills_matrix()
 
         central_container = QWidget()
         root = QVBoxLayout(central_container)
@@ -808,19 +879,145 @@ class MainWindow(QMainWindow):
         if self.empty_hint is not None:
             self.empty_hint.hide()
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
+        ln.cmb_model.currentIndexChanged.connect(self._refresh_model_choices)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
+        self._refresh_model_choices()
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
         self.lines.remove(ln)
         ln.setParent(None)
         ln.deleteLater()
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.empty_hint.show()
             self.reset_views()
         else:
             self.recalc()
+
+    def _refresh_model_choices(self):
+        """Prevent selecting the same machine model on multiple lines."""
+        if not self.lines:
+            return
+
+        selected = []
+        for ln in self.lines:
+            v = ln.value().model
+            if v:
+                selected.append(v)
+
+        for ln in self.lines:
+            current = ln.value().model
+            ln.cmb_model.blockSignals(True)
+            ln.cmb_model.clear()
+            ln.cmb_model.addItem("— Select —")
+            ln.cmb_model.addItems(self.models_sorted)
+
+            if current and current in self.models_sorted:
+                ln.cmb_model.setCurrentIndex(self.models_sorted.index(current) + 1)
+            else:
+                ln.cmb_model.setCurrentIndex(0)
+
+            # Disable models already chosen on other lines.
+            for idx, model in enumerate(self.models_sorted, start=1):
+                item = ln.cmb_model.model().item(idx)
+                if item is not None:
+                    item.setEnabled(not (model in selected and model != current))
+
+            ln.cmb_model.blockSignals(False)
+
+            model = ln.cmb_model.currentText().strip()
+            if model == "— Select —":
+                model = ""
+            ln.chk_training.blockSignals(True)
+            try:
+                if not model:
+                    ln.chk_training.hide()
+                else:
+                    applicable = bool(ln.training_applicable_map.get(model, True))
+                    if not applicable:
+                        ln.chk_training.hide()
+                    else:
+                        ln.chk_training.show()
+            finally:
+                ln.chk_training.blockSignals(False)
+
+    def _load_skills_matrix(self):
+        self.skills_matrix = None
+        self.skills_warning = ""
+        try:
+            if SKILLS_MATRIX_EXCEL.exists():
+                self.skills_matrix = SkillsMatrix(SKILLS_MATRIX_EXCEL)
+            else:
+                self.skills_warning = (
+                    "Skills matrix file not found; using standard allocation behavior. "
+                    "Expected: assets/Machine Qualifications for PCP Quoting.xlsx"
+                )
+        except Exception as e:
+            self.skills_warning = f"Skills matrix unavailable ({e}); using standard allocation behavior."
+
+    @staticmethod
+    def _is_generic_model_name(model: str) -> bool:
+        upper = model.strip().upper()
+        if upper in GENERIC_MODEL_ALIASES:
+            return True
+        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
+
+    def _partition_tech_groups(self, selections: List[LineSelection]) -> Dict[str, List[LineSelection]]:
+        """Partition tech-only lines into crew pools driven by robot + skills-matrix rules."""
+        groups: Dict[str, List[LineSelection]] = {}
+
+        if not selections:
+            return groups
+
+        robot_lines = [s for s in selections if s.model in ROBOT_MODELS]
+        if robot_lines:
+            groups["Robot"] = robot_lines
+
+        tech_only = []
+        for s in selections:
+            mi = self.data.models[s.model]
+            if mi.eng_days_per_machine > 0 or s.model in ROBOT_MODELS:
+                continue
+            tech_only.append(s)
+
+        generic_lines = [s for s in tech_only if self._is_generic_model_name(s.model)]
+        candidate = [s for s in tech_only if s not in generic_lines]
+
+        if self.skills_matrix is None:
+            if candidate or generic_lines:
+                groups["Tech"] = candidate + generic_lines
+            return groups
+
+        skills_known = [s for s in candidate if self.skills_matrix.has_model(s.model)]
+        matrix_missing = [s for s in candidate if not self.skills_matrix.has_model(s.model)]
+
+        tech_groups: List[List[LineSelection]] = []
+        for line in skills_known:
+            placed = False
+            for grp in tech_groups:
+                models = sorted({x.model for x in grp + [line]})
+                if self.skills_matrix.can_group_models(models):
+                    grp.append(line)
+                    placed = True
+                    break
+            if not placed:
+                tech_groups.append([line])
+
+        supplemental = matrix_missing + generic_lines
+        if not tech_groups and supplemental:
+            tech_groups = [[]]
+
+        if tech_groups:
+            for i, line in enumerate(supplemental):
+                tech_groups[i % len(tech_groups)].append(line)
+            for i, grp in enumerate(tech_groups, 1):
+                groups[f"Tech {i}"] = grp
+        elif supplemental:
+            groups["Tech 1"] = supplemental
+
+        return groups
 
     def open_bundled_excel(self):
         """Open the bundled Excel workbook in the user's default spreadsheet app."""
@@ -842,14 +1039,10 @@ class MainWindow(QMainWindow):
         try:
             self.data = ExcelData(Path(fp))
             self.models_sorted = sorted(self.data.models.keys())
+            self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
             for ln in self.lines:
-                cur = ln.cmb_model.currentText()
-                ln.cmb_model.blockSignals(True)
-                ln.cmb_model.clear()
-                ln.cmb_model.addItems(self.models_sorted)
-                if cur in self.models_sorted:
-                    ln.cmb_model.setCurrentIndex(self.models_sorted.index(cur))
-                ln.cmb_model.blockSignals(False)
+                ln.training_applicable_map = self.training_app_map
+            self._refresh_model_choices()
             self.recalc()
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
@@ -870,8 +1063,9 @@ class MainWindow(QMainWindow):
 
         machine_rows = []
         assignments: List[Assignment] = []
-        tech_all: List[int] = []
         eng_all: List[int] = []
+
+        line_calc: Dict[str, Dict[str, int | bool]] = {}
 
         for s in selections:
             mi = self.data.models[s.model]
@@ -894,22 +1088,22 @@ class MainWindow(QMainWindow):
                         f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
                     )
 
-            tech_headcount = 0
+            line_calc[s.model] = {
+                "base_training": base_training,
+                "training_days": training_days,
+                "tech_total": tech_total,
+                "eng_training_potential": eng_training_potential,
+                "eng_training_days": eng_training_days,
+                "eng_total": eng_total,
+            }
+
             eng_headcount = 0
-
-            if tech_total > 0:
-                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
-                tech_headcount = len(tech_alloc)
-                tech_all.extend(tech_alloc)
-                for i, d in enumerate(tech_alloc, 1):
-                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
-
             if eng_total > 0:
                 eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
                 eng_headcount = len(eng_alloc)
                 eng_all.extend(eng_alloc)
                 for i, d in enumerate(eng_alloc, 1):
-                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
+                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate, "Engineer"))
 
             machine_rows.append({
                 "model": s.model,
@@ -922,9 +1116,67 @@ class MainWindow(QMainWindow):
                 "eng_training_potential": eng_training_potential,
                 "tech_total": tech_total,
                 "eng_total": eng_total,
-                "tech_headcount": tech_headcount,
-                "eng_headcount": eng_headcount
+                "tech_headcount": 0,
+                "eng_headcount": eng_headcount,
             })
+
+        # Technician allocation with skills-matrix grouping.
+        group_map = self._partition_tech_groups(selections)
+        tech_group_loads: Dict[str, List[int]] = {}
+        tech_group_members: Dict[str, List[str]] = {}
+
+        for group_name, group_lines in group_map.items():
+            if not group_lines:
+                continue
+            tech_group_members[group_name] = [x.model for x in group_lines]
+            pool_loads: List[int] = []
+            for s in group_lines:
+                mi = self.data.models[s.model]
+                info = line_calc[s.model]
+                if int(info["tech_total"]) <= 0:
+                    continue
+
+                if self._is_generic_model_name(s.model):
+                    total_days = int(info["tech_total"])
+                    if pool_loads:
+                        extra = balanced_allocate(total_days, len(pool_loads))
+                        pool_loads = [pool_loads[i] + extra[i] for i in range(len(pool_loads))]
+                    else:
+                        pool_loads = balanced_allocate(total_days, 1)
+                else:
+                    alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
+                    if not pool_loads:
+                        pool_loads = list(alloc)
+                    else:
+                        needed = len(alloc)
+                        if len(pool_loads) < needed:
+                            pool_loads.extend([0] * (needed - len(pool_loads)))
+                        for i, d in enumerate(alloc):
+                            pool_loads[i] += d
+                    if pool_loads and max(pool_loads) > window:
+                        total_pool_days = sum(pool_loads)
+                        min_heads = ceil_int(total_pool_days / window)
+                        min_heads = max(min_heads, len(pool_loads))
+                        pool_loads = balanced_allocate(total_pool_days, min_heads)
+
+            pool_loads = sorted(pool_loads, reverse=True)
+            tech_group_loads[group_name] = pool_loads
+
+            for idx, row in enumerate(machine_rows):
+                if row["model"] in tech_group_members[group_name]:
+                    machine_rows[idx]["tech_headcount"] = len(pool_loads) if int(row["tech_total"]) > 0 else 0
+
+            for i, d in enumerate(pool_loads, 1):
+                assignments.append(Assignment(
+                    ", ".join(sorted(set(tech_group_members[group_name]))),
+                    "Technician",
+                    i,
+                    d,
+                    d * tech_day_rate,
+                    group_name,
+                ))
+
+        tech_all = [d for loads in tech_group_loads.values() for d in loads]
 
         tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
         eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
@@ -969,7 +1221,8 @@ class MainWindow(QMainWindow):
             "n_people": n_people,
             "total_trip_days": total_trip_days,
             "exp_total": exp_total,
-            "grand_total": grand_total
+            "grand_total": grand_total,
+            "skills_warning": self.skills_warning,
         }
         return tech, eng, exp_lines, meta
 
@@ -1101,7 +1354,11 @@ class MainWindow(QMainWindow):
             return
         try:
             tech, eng, exp_lines, meta = self.calc()
-            self.alert.hide()
+            if meta.get("skills_warning"):
+                self.alert.setText(str(meta.get("skills_warning")))
+                self.alert.show()
+            else:
+                self.alert.hide()
 
             self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total days")
             self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
