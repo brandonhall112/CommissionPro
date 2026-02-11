@@ -1614,6 +1614,40 @@ class MainWindow(QMainWindow):
                 <td style="text-align:right;">{money(l.extended)}</td>
             </tr>""")
 
+        # Build printable workload calendar (same 14-day Gantt concept used in the UI).
+        tech_travel_in = 1
+        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
+        people = []
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            people.append((f"T{i}", int(d), tech_travel_in, "#e04426"))
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            people.append((f"E{i}", int(d), eng_travel_in, "#6790a0"))
+
+        day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        cal_head = "".join([f"<th>{day_labels[i % 7]}</th>" for i in range(WORKLOAD_CALENDAR_DAYS)])
+        cal_rows = []
+        for label, onsite_days, travel_in_day, base_color in people:
+            cells = ["<td></td>" for _ in range(WORKLOAD_CALENDAR_DAYS)]
+            if onsite_days > 0:
+                onsite_start = travel_in_day + 1
+                onsite_end = onsite_start + onsite_days - 1
+                travel_out = onsite_end + 1
+                for day in (travel_in_day, travel_out):
+                    if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                        cells[day - 1] = f'<td class="cal-travel" style="background:{base_color};"></td>'
+                for day in range(onsite_start, onsite_end + 1):
+                    if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                        cells[day - 1] = f'<td class="cal-onsite" style="background:{base_color};"></td>'
+            cal_rows.append(f"<tr><th class=\"cal-person\">{label}</th>{''.join(cells)}</tr>")
+
+        workload_calendar_html = f"""
+            <h3>Workload Calendar</h3>
+            <table class="grid grid-calendar">
+                <tr><th class="cal-person">Person</th>{cal_head}</tr>
+                {''.join(cal_rows) if cal_rows else f'<tr><td colspan="{WORKLOAD_CALENDAR_DAYS + 1}" class="muted">No personnel assigned.</td></tr>'}
+            </table>
+        """
+
         labor_sub = tech.labor_cost + eng.labor_cost
 
         req_html = ""
@@ -1623,14 +1657,19 @@ class MainWindow(QMainWindow):
 
         html = f"""<html><head><meta charset="utf-8" />
         <style>
+            @page {{ size: Letter; margin: 0.6in; }}
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
-            .logo {{ text-align:right; }}
+            .page-logo {{ position: fixed; top: 0.2in; right: 0.05in; z-index: 2; }}
+            .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-top: 0.05in; margin-bottom: 14px; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
-            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
             .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid-calendar th, .grid-calendar td {{ padding: 4px; text-align: center; }}
+            .grid-calendar th.cal-person {{ width: 60px; text-align: left; }}
+            .grid-calendar td.cal-travel {{ opacity: 0.45; }}
+            .grid-calendar td.cal-onsite {{ opacity: 1.0; }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
@@ -1639,12 +1678,12 @@ class MainWindow(QMainWindow):
             .muted {{ color: #6D6E71; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
+            <div class="page-logo">{logo_html}</div>
             <div class="topbar">
                 <div>
                     <p class="title">Commissioning Budget Quote</p>
                     <p class="subtitle muted">Service Estimate</p>
                 </div>
-                <div class="logo">{logo_html}</div>
             </div>
 
             <div class="two">
@@ -1665,6 +1704,8 @@ class MainWindow(QMainWindow):
                     <th style="text-align:center;">Technicians</th><th style="text-align:center;">Engineers</th></tr>
                 {''.join(mr)}
             </table>
+
+            {workload_calendar_html}
 
             <h3>Labor Costs</h3>
             <table class="grid">
