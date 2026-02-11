@@ -732,7 +732,8 @@ class MainWindow(QMainWindow):
         self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
         self.tbl_workload_calendar.horizontalHeader().setDefaultSectionSize(24)
         self.tbl_workload_calendar.verticalHeader().setDefaultSectionSize(26)
-        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        # Stretch day columns to consume available width now that the horizon is 14 days.
+        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         cal_header_font = self.tbl_workload_calendar.horizontalHeader().font()
         cal_header_font.setPointSizeF(max(7.0, cal_header_font.pointSizeF() - 1.0))
         self.tbl_workload_calendar.horizontalHeader().setFont(cal_header_font)
