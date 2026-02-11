@@ -445,7 +445,7 @@ class MachineLine(QFrame):
 
         self._model_changed()
 
-    def _set_training_visibility(self, model: str):
+       def _set_training_visibility(self, model: str):
         """Show/hide training checkbox without mutating checked state."""
         if model == "— Select —":
             model = ""
@@ -480,6 +480,7 @@ class MachineLine(QFrame):
             qty=int(self.spin_qty.value()) if model else 0,
             training_required=(bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False)
         )
+
 
 
 class Card(QFrame):
@@ -896,7 +897,7 @@ class MainWindow(QMainWindow):
         else:
             self.recalc()
 
-    def _refresh_model_choices(self):
+        def _refresh_model_choices(self):
         """Prevent selecting the same machine model on multiple lines."""
         if not self.lines:
             return
@@ -1340,6 +1341,7 @@ class MainWindow(QMainWindow):
         self.chart.legend().setAlignment(Qt.AlignBottom)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
