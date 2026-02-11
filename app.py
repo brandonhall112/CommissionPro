@@ -445,8 +445,8 @@ class MachineLine(QFrame):
 
         self._model_changed()
 
-    def _set_training_visibility(self, model: str):
-        """Show/hide training checkbox without mutating the checked state."""
+       def _set_training_visibility(self, model: str):
+        """Show/hide training checkbox without mutating checked state."""
         if model == "— Select —":
             model = ""
         model = model.strip()
@@ -463,19 +463,6 @@ class MachineLine(QFrame):
 
     def _model_changed(self, *_):
         self._set_training_visibility(self.cmb_model.currentText())
-        if applicable:
-            self.chk_training.show()
-        else:
-            self.chk_training.hide()
-
-    def _model_changed(self, *_):
-        self._set_training_visibility(self.cmb_model.currentText())
-            applicable = bool(self.training_applicable_map.get(model, True))
-            if not applicable:
-                self.chk_training.hide()
-                self.chk_training.setChecked(False)
-            else:
-                self.chk_training.show()
         self.on_change()
 
     def _changed(self, *_):
@@ -493,6 +480,7 @@ class MachineLine(QFrame):
             qty=int(self.spin_qty.value()) if model else 0,
             training_required=(bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False)
         )
+
 
 
 class Card(QFrame):
@@ -909,13 +897,12 @@ class MainWindow(QMainWindow):
         else:
             self.recalc()
 
-    def _refresh_model_choices(self):
+        def _refresh_model_choices(self):
         """Prevent selecting the same machine model on multiple lines."""
         if not self.lines:
             return
 
         selected = []
-        training_state = {ln: bool(ln.chk_training.isChecked()) for ln in self.lines}
         for ln in self.lines:
             v = ln.value().model
             if v:
@@ -923,7 +910,6 @@ class MainWindow(QMainWindow):
 
         for ln in self.lines:
             current = ln.value().model
-            prior_training_checked = training_state.get(ln, True)
             ln.cmb_model.blockSignals(True)
             ln.cmb_model.clear()
             ln.cmb_model.addItem("— Select —")
@@ -943,25 +929,9 @@ class MainWindow(QMainWindow):
             ln.cmb_model.blockSignals(False)
 
             model = ln.cmb_model.currentText().strip()
-            if model == "— Select —":
-                model = ""
             ln.chk_training.blockSignals(True)
             try:
-                if not model:
-                    ln.chk_training.hide()
-                    ln.chk_training.setChecked(False)
-                else:
-                    applicable = bool(ln.training_applicable_map.get(model, True))
-                    if not applicable:
-                        ln.chk_training.hide()
-                    else:
-                        ln.chk_training.show()
-                        ln.chk_training.setChecked(False)
-                    else:
-                        ln.chk_training.show()
-                        ln.chk_training.setChecked(prior_training_checked)
-                        if not ln.chk_training.isChecked():
-                            ln.chk_training.setChecked(True)
+                ln._set_training_visibility(model)
             finally:
                 ln.chk_training.blockSignals(False)
 
