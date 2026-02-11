@@ -1061,7 +1061,14 @@ class MainWindow(QMainWindow):
         candidates = [
             Path(__file__).resolve().parent / "README.md",
             Path(__file__).resolve().parent.parent / "README.md",
+            Path.cwd() / "README.md",
         ]
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.extend([
+                Path(meipass) / "README.md",
+                Path(meipass).parent / "README.md",
+            ])
         if getattr(sys, "frozen", False):
             exe_dir = Path(sys.executable).resolve().parent
             candidates.extend([
