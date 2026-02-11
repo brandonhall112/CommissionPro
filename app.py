@@ -85,6 +85,7 @@ DEFAULT_INSTALL_WINDOW = 7
 MIN_INSTALL_WINDOW = 3
 MAX_INSTALL_WINDOW = 14
 TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
+WORKLOAD_CALENDAR_DAYS = 21  # 3-week calendar horizon (Sun-Sat)
 
 # Requested overrides
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
@@ -718,18 +719,21 @@ class MainWindow(QMainWindow):
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
-        # Workload calendar in Gantt style (30-day Sun-Sat view)
-        self.tbl_workload_calendar = QTableWidget(6, 21)
+        # Workload calendar in Gantt style (3-week Sun-Sat view)
+        self.tbl_workload_calendar = QTableWidget(6, WORKLOAD_CALENDAR_DAYS)
         self.tbl_workload_calendar.setObjectName("table")
         self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
         self.tbl_workload_calendar.horizontalHeader().setDefaultSectionSize(24)
         self.tbl_workload_calendar.verticalHeader().setDefaultSectionSize(26)
         self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        cal_header_font = self.tbl_workload_calendar.horizontalHeader().font()
+        cal_header_font.setPointSizeF(max(7.0, cal_header_font.pointSizeF() - 1.0))
+        self.tbl_workload_calendar.horizontalHeader().setFont(cal_header_font)
         self.tbl_workload_calendar.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.tbl_workload_calendar.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.tbl_workload_calendar.setHorizontalHeaderLabels([
-            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(21)
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(WORKLOAD_CALENDAR_DAYS)
         ])
         self.tbl_workload_calendar.setMinimumHeight(320)
         self.tbl_workload_calendar.setToolTip(
@@ -1059,6 +1063,18 @@ class MainWindow(QMainWindow):
 
         tech_hr, _ = self.data.get_rate("tech. regular time")
         eng_hr, _ = self.data.get_rate("eng. regular time")
+
+        def _read_rate_with_fallback(primary_key: str, fallback_key: str) -> float:
+            try:
+                rate, _ = self.data.get_rate(primary_key)
+                return float(rate)
+            except Exception:
+                rate, _ = self.data.get_rate(fallback_key)
+                return float(rate)
+
+        tech_ot_hr = _read_rate_with_fallback("tech. overtime", "tech. regular time")
+        eng_ot_hr = _read_rate_with_fallback("eng. overtime", "eng. regular time")
+
         hours_per_day = 8
         tech_day_rate = tech_hr * hours_per_day
         eng_day_rate = eng_hr * hours_per_day
@@ -1180,8 +1196,35 @@ class MainWindow(QMainWindow):
 
         tech_all = [d for loads in tech_group_loads.values() for d in loads]
 
-        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
-        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
+        def _weekend_onsite_days(onsite_by_person: List[int], travel_in_day: int) -> int:
+            weekend_days = 0
+            for onsite_days in onsite_by_person:
+                days = int(onsite_days or 0)
+                if days <= 0:
+                    continue
+                onsite_start = int(travel_in_day) + 1
+                onsite_end = onsite_start + days - 1
+                for day in range(onsite_start, onsite_end + 1):
+                    day_of_week = ((day - 1) % 7) + 1  # 1=Sun ... 7=Sat
+                    if day_of_week in (1, 7):
+                        weekend_days += 1
+            return weekend_days
+
+        tech_weekend_days = _weekend_onsite_days(tech_all, travel_in_day=1)
+        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=(2 if rpc_engineer_late_depart else 1))
+
+        tech_regular_days = max(0, int(sum(tech_all)) - tech_weekend_days)
+        eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
+        tech_ot_hours = tech_weekend_days * hours_per_day
+        eng_ot_hours = eng_weekend_days * hours_per_day
+
+        tech_regular_cost = float(tech_regular_days) * tech_day_rate
+        eng_regular_cost = float(eng_regular_days) * eng_day_rate
+        tech_ot_cost = float(tech_ot_hours) * tech_ot_hr
+        eng_ot_cost = float(eng_ot_hours) * eng_ot_hr
+
+        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, tech_regular_cost + tech_ot_cost)
+        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, eng_regular_cost + eng_ot_cost)
 
         trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
         n_people = len(trip_days_by_person)
@@ -1226,6 +1269,14 @@ class MainWindow(QMainWindow):
             "grand_total": grand_total,
             "skills_warning": self.skills_warning,
             "rpc_engineer_late_depart": rpc_engineer_late_depart,
+            "tech_regular_days": tech_regular_days,
+            "eng_regular_days": eng_regular_days,
+            "tech_ot_hours": tech_ot_hours,
+            "eng_ot_hours": eng_ot_hours,
+            "tech_ot_rate": tech_ot_hr,
+            "eng_ot_rate": eng_ot_hr,
+            "tech_ot_cost": tech_ot_cost,
+            "eng_ot_cost": eng_ot_cost,
         }
         return tech, eng, exp_lines, meta
 
@@ -1255,9 +1306,9 @@ class MainWindow(QMainWindow):
         rows = max(6, int(rows or 0))
         self.tbl_workload_calendar.clearContents()
         self.tbl_workload_calendar.setRowCount(rows)
-        self.tbl_workload_calendar.setColumnCount(21)
+        self.tbl_workload_calendar.setColumnCount(WORKLOAD_CALENDAR_DAYS)
         self.tbl_workload_calendar.setHorizontalHeaderLabels(
-            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(21)]
+            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(WORKLOAD_CALENDAR_DAYS)]
         )
         for r in range(rows):
             self.tbl_workload_calendar.setRowHeight(r, 26)
@@ -1298,7 +1349,7 @@ class MainWindow(QMainWindow):
 
             # Travel in/out
             for day in (travel_in_day, travel_out):
-                if 1 <= day <= 21:
+                if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
                     item = self.tbl_workload_calendar.item(row, day - 1)
                     if item is None:
                         item = QTableWidgetItem("")
@@ -1307,7 +1358,7 @@ class MainWindow(QMainWindow):
 
             # Onsite solid bar
             for day in range(onsite_start, onsite_end + 1):
-                if 1 <= day <= 21:
+                if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
                     item = self.tbl_workload_calendar.item(row, day - 1)
                     if item is None:
                         item = QTableWidgetItem("")
@@ -1384,10 +1435,12 @@ class MainWindow(QMainWindow):
                         it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.tbl_assign.setItem(i, c, it)
 
-            self.tbl_labor.setRowCount(3)
+            self.tbl_labor.setRowCount(5)
             labor_rows = [
-                ("Technician", money(tech.day_rate) + "/day", str(tech.total_onsite_days), str(tech.headcount), money(tech.labor_cost)),
-                ("Engineer", money(eng.day_rate) + "/day", str(eng.total_onsite_days), str(eng.headcount), money(eng.labor_cost)),
+                ("Tech. Regular Time", money(tech.day_rate) + "/day", str(meta.get("tech_regular_days", tech.total_onsite_days)), str(tech.headcount), money((meta.get("tech_regular_days", tech.total_onsite_days)) * tech.day_rate)),
+                ("Tech. Overtime (Sat/Sun)", money(meta.get("tech_ot_rate", 0.0)) + "/hr", str(meta.get("tech_ot_hours", 0)), str(tech.headcount), money(meta.get("tech_ot_cost", 0.0))),
+                ("Eng. Regular Time", money(eng.day_rate) + "/day", str(meta.get("eng_regular_days", eng.total_onsite_days)), str(eng.headcount), money((meta.get("eng_regular_days", eng.total_onsite_days)) * eng.day_rate)),
+                ("Eng. Overtime (Sat/Sun)", money(meta.get("eng_ot_rate", 0.0)) + "/hr", str(meta.get("eng_ot_hours", 0)), str(eng.headcount), money(meta.get("eng_ot_cost", 0.0))),
             ]
             for r_i, row in enumerate(labor_rows):
                 for c, v in enumerate(row):
@@ -1401,13 +1454,13 @@ class MainWindow(QMainWindow):
 
             # Subtotal row
             labor_subtotal = tech.labor_cost + eng.labor_cost
-            self.tbl_labor.setItem(2, 0, QTableWidgetItem("Subtotal"))
-            self.tbl_labor.setItem(2, 1, QTableWidgetItem(""))
-            self.tbl_labor.setItem(2, 2, QTableWidgetItem(""))
-            self.tbl_labor.setItem(2, 3, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 0, QTableWidgetItem("Subtotal"))
+            self.tbl_labor.setItem(4, 1, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 2, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 3, QTableWidgetItem(""))
             it = QTableWidgetItem(money(labor_subtotal))
             it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.tbl_labor.setItem(2, 4, it)
+            self.tbl_labor.setItem(4, 4, it)
 
             self.lbl_exp_hdr.setText(
                 f"Expenses are calculated using person-days, including {TRAVEL_DAYS_PER_PERSON} travel days per person."
@@ -1545,8 +1598,10 @@ class MainWindow(QMainWindow):
             <h3>Labor Costs</h3>
             <table class="grid">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
-                <tr><td>Tech. Regular Time ({tech.total_onsite_days} days × {money(tech.day_rate)}/day)</td><td class="right">{money(tech.labor_cost)}</td></tr>
-                <tr><td>Eng. Regular Time ({eng.total_onsite_days} days × {money(eng.day_rate)}/day)</td><td class="right">{money(eng.labor_cost)}</td></tr>
+                <tr><td>Tech. Regular Time ({meta.get("tech_regular_days", tech.total_onsite_days)} days × {money(tech.day_rate)}/day)</td><td class="right">{money(meta.get("tech_regular_days", tech.total_onsite_days) * tech.day_rate)}</td></tr>
+                <tr><td>Tech. Overtime (Sat/Sun) ({meta.get("tech_ot_hours", 0)} hr × {money(meta.get("tech_ot_rate", 0.0))}/hr)</td><td class="right">{money(meta.get("tech_ot_cost", 0.0))}</td></tr>
+                <tr><td>Eng. Regular Time ({meta.get("eng_regular_days", eng.total_onsite_days)} days × {money(eng.day_rate)}/day)</td><td class="right">{money(meta.get("eng_regular_days", eng.total_onsite_days) * eng.day_rate)}</td></tr>
+                <tr><td>Eng. Overtime (Sat/Sun) ({meta.get("eng_ot_hours", 0)} hr × {money(meta.get("eng_ot_rate", 0.0))}/hr)</td><td class="right">{money(meta.get("eng_ot_cost", 0.0))}</td></tr>
                 <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
             </table>
 
