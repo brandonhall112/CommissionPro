@@ -653,6 +653,7 @@ class MainWindow(QMainWindow):
         self.lines_layout.addWidget(self.empty_hint)
 
         self.scroll.setWidget(container)
+        self.scroll.setMinimumHeight(240)
         left_l.addWidget(self.scroll, 1)
 
         btn_add = QPushButton("+  Add Machine")
@@ -718,7 +719,7 @@ class MainWindow(QMainWindow):
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
         # Workload calendar in Gantt style (30-day Sun-Sat view)
-        self.tbl_workload_calendar = QTableWidget(6, 30)
+        self.tbl_workload_calendar = QTableWidget(6, 21)
         self.tbl_workload_calendar.setObjectName("table")
         self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
@@ -728,14 +729,14 @@ class MainWindow(QMainWindow):
         self.tbl_workload_calendar.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.tbl_workload_calendar.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.tbl_workload_calendar.setHorizontalHeaderLabels([
-            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(30)
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(21)
         ])
-        self.tbl_workload_calendar.setMinimumHeight(440)
+        self.tbl_workload_calendar.setMinimumHeight(320)
         self.tbl_workload_calendar.setToolTip(
-            "Gantt trip view: light color = travel day, solid color = onsite day. "
+            "Gantt trip view (3 weeks): light color = travel day, solid color = onsite day. "
             "Tech uses #e04426 and Engineer uses #6790a0."
         )
-        sec_chart = Section("Workload Calendar", "30-day Sun-Sat Gantt trip view.", "🗓️")
+        sec_chart = Section("Workload Calendar", "3-week Sun-Sat Gantt trip view.", "🗓️")
         sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
 
         # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
@@ -1254,19 +1255,19 @@ class MainWindow(QMainWindow):
         rows = max(6, int(rows or 0))
         self.tbl_workload_calendar.clearContents()
         self.tbl_workload_calendar.setRowCount(rows)
-        self.tbl_workload_calendar.setColumnCount(30)
+        self.tbl_workload_calendar.setColumnCount(21)
         self.tbl_workload_calendar.setHorizontalHeaderLabels(
-            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(30)]
+            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(21)]
         )
         for r in range(rows):
             self.tbl_workload_calendar.setRowHeight(r, 26)
-            for c in range(30):
+            for c in range(21):
                 it = QTableWidgetItem("")
                 it.setTextAlignment(Qt.AlignCenter)
                 self.tbl_workload_calendar.setItem(r, c, it)
 
     def _render_workload_calendar(self, tech: RoleTotals, eng: RoleTotals, meta: Dict):
-        """Render a 30-day Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
+        """Render a 3-week Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
 
         # Default assumptions:
         # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
@@ -1297,7 +1298,7 @@ class MainWindow(QMainWindow):
 
             # Travel in/out
             for day in (travel_in_day, travel_out):
-                if 1 <= day <= 30:
+                if 1 <= day <= 21:
                     item = self.tbl_workload_calendar.item(row, day - 1)
                     if item is None:
                         item = QTableWidgetItem("")
@@ -1306,7 +1307,7 @@ class MainWindow(QMainWindow):
 
             # Onsite solid bar
             for day in range(onsite_start, onsite_end + 1):
-                if 1 <= day <= 30:
+                if 1 <= day <= 21:
                     item = self.tbl_workload_calendar.item(row, day - 1)
                     if item is None:
                         item = QTableWidgetItem("")
@@ -1647,7 +1648,7 @@ class MainWindow(QMainWindow):
             # multiple machine lines are visible without feeling cramped.
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
+                    self.scroll.setMinimumHeight(240)
                     self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             except Exception:
                 pass
@@ -1671,7 +1672,7 @@ class MainWindow(QMainWindow):
             # Restore default sizing for wide (two-column) mode.
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(0)
+                    self.scroll.setMinimumHeight(240)
             except Exception:
                 pass
 
@@ -1680,7 +1681,7 @@ class MainWindow(QMainWindow):
             self._update_right_scroll_height_if_stacked()
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
+                    self.scroll.setMinimumHeight(240)
             except Exception:
                 pass
 
