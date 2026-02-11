@@ -445,7 +445,7 @@ class MachineLine(QFrame):
 
         self._model_changed()
 
-       def _set_training_visibility(self, model: str):
+    def _set_training_visibility(self, model: str):
         """Show/hide training checkbox without mutating checked state."""
         if model == "— Select —":
             model = ""
@@ -897,7 +897,7 @@ class MainWindow(QMainWindow):
         else:
             self.recalc()
 
-        def _refresh_model_choices(self):
+    def _refresh_model_choices(self):
         """Prevent selecting the same machine model on multiple lines."""
         if not self.lines:
             return
