@@ -74,8 +74,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QPainter, QColor
-from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QHorizontalStackedBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
+from PySide6.QtGui import QPageSize, QFont, QColor
 import base64
 
 APP_TITLE = "Pearson Commissioning Pro"
@@ -718,15 +717,20 @@ class MainWindow(QMainWindow):
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
-        # Workload bar chart (bonus visual)
-        self.chart = QChart()
-        self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.Antialiasing)
-        self.chart_view.setMinimumHeight(300)
-        sec_chart = Section("Workload", "Days onsite per person (T=Tech, E=Engineer).", "📊")
-        sec_chart.content_layout.addWidget(self.chart_view)
+        # Workload calendar (30-day Mon-Sun view)
+        self.tbl_workload_calendar = QTableWidget(5, 7)
+        self.tbl_workload_calendar.setObjectName("table")
+        self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
+        self.tbl_workload_calendar.verticalHeader().setVisible(False)
+        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        self.tbl_workload_calendar.setMinimumHeight(340)
+        self.tbl_workload_calendar.setToolTip("✈ = travel day, ■ = onsite day. Default travel starts Sunday; onsite starts Monday.")
+        sec_chart = Section("Workload Calendar", "30-day Mon-Sun trip view (✈ travel, ■ onsite).", "🗓️")
+        sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
 
-        # Left side: put chart under Machine Configuration so the right-side widgets stay readable
+        # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
         left_l.addWidget(sec_chart)
 
         right_l.addWidget(sec_breakdown)
@@ -869,12 +873,7 @@ class MainWindow(QMainWindow):
         self.btn_print.setEnabled(False)
         self.alert.hide()
         self.alert.setText("")
-        if hasattr(self, 'chart'):
-            try:
-                self.chart.removeAllSeries()
-                self.chart.setTitle('Workload (onsite days)')
-            except Exception:
-                pass
+        self._clear_workload_calendar()
 
     def add_line(self):
         if self.empty_hint is not None:
@@ -1044,6 +1043,8 @@ class MainWindow(QMainWindow):
         selections = [s for s in selections if s.qty > 0 and s.model and s.model in self.data.models]
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
+
+        rpc_engineer_late_depart = any(s.model in ROBOT_MODELS for s in selections)
 
         window = int(self.spin_window.value())
 
@@ -1215,6 +1216,7 @@ class MainWindow(QMainWindow):
             "exp_total": exp_total,
             "grand_total": grand_total,
             "skills_warning": self.skills_warning,
+            "rpc_engineer_late_depart": rpc_engineer_late_depart,
         }
         return tech, eng, exp_lines, meta
 
@@ -1240,105 +1242,69 @@ class MainWindow(QMainWindow):
 
     
     
-    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-        """Polished horizontal stacked bar chart of onsite + travel days by person."""
-        labels: List[str] = []
-        tech_vals: List[int] = []
-        eng_vals: List[int] = []
+    def _clear_workload_calendar(self):
+        self.tbl_workload_calendar.clearContents()
+        self.tbl_workload_calendar.setRowCount(5)
+        self.tbl_workload_calendar.setColumnCount(7)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+        for r in range(5):
+            self.tbl_workload_calendar.setRowHeight(r, 64)
 
-        for d in tech.onsite_days_by_person:
-            labels.append(f"T{len(tech_vals)+1}")
-            tech_vals.append(int(d))
+        for day in range(1, 31):
+            row = (day - 1) // 7
+            col = (day - 1) % 7
+            item = QTableWidgetItem(str(day))
+            item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
+            self.tbl_workload_calendar.setItem(row, col, item)
 
-        for d in eng.onsite_days_by_person:
-            labels.append(f"E{len(eng_vals)+1}")
-            eng_vals.append(int(d))
+    @staticmethod
+    def _append_day_token(item: QTableWidgetItem | None, token: str):
+        base = item.text() if item is not None else ""
+        if not base:
+            base = ""
+        text = f"{base}\n{token}" if base else token
+        item.setText(text)
 
-        self.chart.removeAllSeries()
-        self.chart.setTitle("Workload (days)")
-        self.chart.setBackgroundRoundness(8)
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
 
-        if len(labels) == 0:
-            return
+    def _render_workload_calendar(self, tech: RoleTotals, eng: RoleTotals, meta: Dict):
+        """Render a generic 30-day Mon-Sun calendar with trip bars."""
+        self._clear_workload_calendar()
 
-        # Colors (match UI theme)
-        tech_color = QColor("#e04426")  # Tech bar
-        eng_color = QColor("#6790a0")   # Engineer bar
-        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
-        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+        # Default assumptions:
+        # - Tech travel-in: Sunday (day 7), first onsite Monday (day 8)
+        # - Engineer same, except RPC jobs depart one day later (Monday/day 8)
+        tech_travel_in = 7
+        eng_travel_in = 8 if bool(meta.get("rpc_engineer_late_depart", False)) else 7
 
-        series = QHorizontalStackedBarSeries()
+        def place_trip(prefix: str, idx: int, onsite_days: int, travel_in_day: int):
+            onsite = int(onsite_days or 0)
+            if onsite <= 0:
+                return
+            onsite_start = travel_in_day + 1
+            onsite_end = onsite_start + onsite - 1
+            travel_out = onsite_end + 1
 
-        set_tech_on = QBarSet("Tech")
-        set_tech_tr = QBarSet("Tech travel")
-        set_eng_on = QBarSet("Eng")
-        set_eng_tr = QBarSet("Eng travel")
+            for day, token in (
+                (travel_in_day, f"✈{prefix}{idx}"),
+                *[(d, f"■{prefix}{idx}") for d in range(onsite_start, onsite_end + 1)],
+                (travel_out, f"✈{prefix}{idx}"),
+            ):
+                if day < 1 or day > 30:
+                    continue
+                row = (day - 1) // 7
+                col = (day - 1) % 7
+                item = self.tbl_workload_calendar.item(row, col)
+                if item is None:
+                    item = QTableWidgetItem(str(day))
+                    item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
+                    self.tbl_workload_calendar.setItem(row, col, item)
+                self._append_day_token(item, token)
 
-        set_tech_on.setColor(tech_color)
-        set_tech_tr.setColor(tech_travel)
-        set_eng_on.setColor(eng_color)
-        set_eng_tr.setColor(eng_travel)
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            place_trip("T", i, int(d), tech_travel_in)
 
-        n = len(labels)
-        # Build arrays aligned to labels: first tech people then engineer people
-        for i in range(n):
-            is_tech = labels[i].startswith("T")
-            if is_tech:
-                v = tech_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-                set_eng_on.append(0.0)
-                set_eng_tr.append(0.0)
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(0.0)
-                set_tech_tr.append(0.0)
-                set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-
-        series.append(set_tech_on)
-        series.append(set_tech_tr)
-        series.append(set_eng_on)
-        series.append(set_eng_tr)
-
-        self.chart.addSeries(series)
-
-        axis_y = QBarCategoryAxis()
-        axis_y.append(labels)
-
-        totals = []
-        for i in range(n):
-            if labels[i].startswith("T"):
-                v = tech_vals[int(labels[i][1:]) - 1]
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
-        max_v = max(totals) if totals else 1
-
-        axis_x = QValueAxis()
-        axis_x.setRange(0, max(1, int(max_v)))
-        axis_x.setLabelFormat("%d")
-        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
-
-        for ax in list(self.chart.axes()):
-            self.chart.removeAxis(ax)
-
-        self.chart.addAxis(axis_y, Qt.AlignLeft)
-        self.chart.addAxis(axis_x, Qt.AlignBottom)
-        series.attachAxis(axis_y)
-        series.attachAxis(axis_x)
-
-        # Labels/legend polish
-        try:
-            series.setLabelsVisible(True)
-            series.setLabelsPosition(series.LabelsInsideEnd)
-            series.setLabelsFormat("@value")
-        except Exception:
-            pass
-
-        self.chart.legend().setVisible(True)
-        self.chart.legend().setAlignment(Qt.AlignBottom)
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            place_trip("E", i, int(d), eng_travel_in)
 
     def recalc(self):
         self._refresh_model_choices()
@@ -1358,7 +1324,7 @@ class MainWindow(QMainWindow):
             self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days")
             self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
 
-            self.update_workload_chart(tech, eng)
+            self._render_workload_calendar(tech, eng, meta)
             self.lbl_total_val.setText(money(meta["grand_total"]))
 
             rows = meta["machine_rows"]
