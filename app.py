@@ -928,18 +928,9 @@ class MainWindow(QMainWindow):
             ln.cmb_model.blockSignals(False)
 
             model = ln.cmb_model.currentText().strip()
-            if model == "— Select —":
-                model = ""
             ln.chk_training.blockSignals(True)
             try:
-                if not model:
-                    ln.chk_training.hide()
-                else:
-                    applicable = bool(ln.training_applicable_map.get(model, True))
-                    if not applicable:
-                        ln.chk_training.hide()
-                    else:
-                        ln.chk_training.show()
+                ln._set_training_visibility(model)
             finally:
                 ln.chk_training.blockSignals(False)
 
