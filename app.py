@@ -717,17 +717,25 @@ class MainWindow(QMainWindow):
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
-        # Workload calendar (30-day Mon-Sun view)
-        self.tbl_workload_calendar = QTableWidget(5, 7)
+        # Workload calendar in Gantt style (30-day Sun-Sat view)
+        self.tbl_workload_calendar = QTableWidget(6, 30)
         self.tbl_workload_calendar.setObjectName("table")
         self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
-        self.tbl_workload_calendar.verticalHeader().setVisible(False)
-        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.tbl_workload_calendar.setHorizontalHeaderLabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
-        self.tbl_workload_calendar.setMinimumHeight(340)
-        self.tbl_workload_calendar.setToolTip("✈ = travel day, ■ = onsite day. Default travel starts Sunday; onsite starts Monday.")
-        sec_chart = Section("Workload Calendar", "30-day Mon-Sun trip view (✈ travel, ■ onsite).", "🗓️")
+        self.tbl_workload_calendar.horizontalHeader().setDefaultSectionSize(24)
+        self.tbl_workload_calendar.verticalHeader().setDefaultSectionSize(26)
+        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.tbl_workload_calendar.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.tbl_workload_calendar.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels([
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(30)
+        ])
+        self.tbl_workload_calendar.setMinimumHeight(440)
+        self.tbl_workload_calendar.setToolTip(
+            "Gantt trip view: light color = travel day, solid color = onsite day. "
+            "Tech uses #e04426 and Engineer uses #6790a0."
+        )
+        sec_chart = Section("Workload Calendar", "30-day Sun-Sat Gantt trip view.", "🗓️")
         sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
 
         # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
@@ -1242,69 +1250,68 @@ class MainWindow(QMainWindow):
 
     
     
-    def _clear_workload_calendar(self):
+    def _clear_workload_calendar(self, rows: int = 6):
+        rows = max(6, int(rows or 0))
         self.tbl_workload_calendar.clearContents()
-        self.tbl_workload_calendar.setRowCount(5)
-        self.tbl_workload_calendar.setColumnCount(7)
-        self.tbl_workload_calendar.setHorizontalHeaderLabels(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
-        for r in range(5):
-            self.tbl_workload_calendar.setRowHeight(r, 64)
-
-        for day in range(1, 31):
-            row = (day - 1) // 7
-            col = (day - 1) % 7
-            item = QTableWidgetItem(str(day))
-            item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
-            self.tbl_workload_calendar.setItem(row, col, item)
-
-    @staticmethod
-    def _append_day_token(item: QTableWidgetItem | None, token: str):
-        base = item.text() if item is not None else ""
-        if not base:
-            base = ""
-        text = f"{base}\n{token}" if base else token
-        item.setText(text)
-
+        self.tbl_workload_calendar.setRowCount(rows)
+        self.tbl_workload_calendar.setColumnCount(30)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels(
+            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(30)]
+        )
+        for r in range(rows):
+            self.tbl_workload_calendar.setRowHeight(r, 26)
+            for c in range(30):
+                it = QTableWidgetItem("")
+                it.setTextAlignment(Qt.AlignCenter)
+                self.tbl_workload_calendar.setItem(r, c, it)
 
     def _render_workload_calendar(self, tech: RoleTotals, eng: RoleTotals, meta: Dict):
-        """Render a generic 30-day Mon-Sun calendar with trip bars."""
-        self._clear_workload_calendar()
+        """Render a 30-day Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
 
         # Default assumptions:
-        # - Tech travel-in: Sunday (day 7), first onsite Monday (day 8)
-        # - Engineer same, except RPC jobs depart one day later (Monday/day 8)
-        tech_travel_in = 7
-        eng_travel_in = 8 if bool(meta.get("rpc_engineer_late_depart", False)) else 7
+        # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
+        # - Engineer same, except RPC jobs depart one day later (Monday/day 2)
+        tech_travel_in = 1
+        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
 
-        def place_trip(prefix: str, idx: int, onsite_days: int, travel_in_day: int):
-            onsite = int(onsite_days or 0)
-            if onsite <= 0:
-                return
+        people = []
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            people.append((f"T{i}", int(d), tech_travel_in, QColor("#e04426")))
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            people.append((f"E{i}", int(d), eng_travel_in, QColor("#6790a0")))
+
+        self._clear_workload_calendar(rows=len(people))
+        labels = [p[0] for p in people] + [""] * max(0, self.tbl_workload_calendar.rowCount() - len(people))
+        self.tbl_workload_calendar.setVerticalHeaderLabels(labels)
+
+        for row, (_label, onsite_days, travel_in_day, base_color) in enumerate(people):
+            if onsite_days <= 0:
+                continue
+
+            travel_color = QColor(base_color)
+            travel_color.setAlpha(115)
+
             onsite_start = travel_in_day + 1
-            onsite_end = onsite_start + onsite - 1
+            onsite_end = onsite_start + onsite_days - 1
             travel_out = onsite_end + 1
 
-            for day, token in (
-                (travel_in_day, f"✈{prefix}{idx}"),
-                *[(d, f"■{prefix}{idx}") for d in range(onsite_start, onsite_end + 1)],
-                (travel_out, f"✈{prefix}{idx}"),
-            ):
-                if day < 1 or day > 30:
-                    continue
-                row = (day - 1) // 7
-                col = (day - 1) % 7
-                item = self.tbl_workload_calendar.item(row, col)
-                if item is None:
-                    item = QTableWidgetItem(str(day))
-                    item.setTextAlignment(Qt.AlignTop | Qt.AlignLeft)
-                    self.tbl_workload_calendar.setItem(row, col, item)
-                self._append_day_token(item, token)
+            # Travel in/out
+            for day in (travel_in_day, travel_out):
+                if 1 <= day <= 30:
+                    item = self.tbl_workload_calendar.item(row, day - 1)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        self.tbl_workload_calendar.setItem(row, day - 1, item)
+                    item.setBackground(travel_color)
 
-        for i, d in enumerate(tech.onsite_days_by_person, start=1):
-            place_trip("T", i, int(d), tech_travel_in)
-
-        for i, d in enumerate(eng.onsite_days_by_person, start=1):
-            place_trip("E", i, int(d), eng_travel_in)
+            # Onsite solid bar
+            for day in range(onsite_start, onsite_end + 1):
+                if 1 <= day <= 30:
+                    item = self.tbl_workload_calendar.item(row, day - 1)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        self.tbl_workload_calendar.setItem(row, day - 1, item)
+                    item.setBackground(base_color)
 
     def recalc(self):
         self._refresh_model_choices()
