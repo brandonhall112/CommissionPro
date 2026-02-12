@@ -483,6 +483,7 @@ class MachineLine(QFrame):
         )
 
 
+
 class Card(QFrame):
     def __init__(self, title: str, icon_text: str):
         super().__init__()
@@ -1436,6 +1437,7 @@ class MainWindow(QMainWindow):
                     item.setBackground(base_color)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
