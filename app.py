@@ -70,12 +70,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
+    QTextBrowser, QDialog
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QPainter, QColor
-from PySide6.QtCharts import QChart, QChartView, QHorizontalBarSeries, QHorizontalStackedBarSeries, QBarSet, QValueAxis, QBarCategoryAxis
+from PySide6.QtGui import QPageSize, QFont, QColor
 import base64
 
 APP_TITLE = "Pearson Commissioning Pro"
@@ -86,6 +86,7 @@ DEFAULT_INSTALL_WINDOW = 7
 MIN_INSTALL_WINDOW = 3
 MAX_INSTALL_WINDOW = 14
 TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
+WORKLOAD_CALENDAR_DAYS = 14  # 2-week calendar horizon (Sun-Sat)
 
 # Requested overrides
 OVERRIDE_AIRFARE_PER_PERSON = 1500.0
@@ -93,7 +94,15 @@ OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
+SKILLS_MATRIX_EXCEL = ASSETS_DIR / "Machine Qualifications for PCP Quoting.xlsx"
 LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
+
+ROBOT_MODELS = {"RPC-C", "RPC-DF"}
+GENERIC_MODEL_ALIASES = {
+    "CONV",
+    "PRODUCTION SUPPORT DAY",
+    "TRAINING DAY",
+}
 
 
 def ceil_int(x: float) -> int:
@@ -212,6 +221,63 @@ class Assignment:
     person_num: int
     onsite_days: int
     cost: float
+    crew_pool: str = ""
+
+
+class SkillsMatrix:
+    """Technician qualification matrix loader used for tech-only grouping."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.tech_rows: List[Dict[str, str]] = []
+        self.model_headers: set[str] = set()
+        self._load()
+
+    def _load(self):
+        wb = openpyxl.load_workbook(self.path, data_only=True)
+        ws = wb.active
+
+        headers = []
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(1, c).value
+            headers.append(str(v).strip() if v is not None else "")
+
+        model_cols: Dict[int, str] = {}
+        for idx, name in enumerate(headers, 1):
+            if idx <= 2:
+                continue
+            if name:
+                model_cols[idx] = name
+                self.model_headers.add(name)
+
+        for r in range(2, ws.max_row + 1):
+            resource_type = ws.cell(r, 1).value
+            if str(resource_type).strip().lower() != "technician":
+                continue
+
+            ratings: Dict[str, str] = {}
+            for c, model in model_cols.items():
+                val = ws.cell(r, c).value
+                ratings[model] = str(val).strip().upper() if val is not None else ""
+            self.tech_rows.append(ratings)
+
+    def has_model(self, model: str) -> bool:
+        return model in self.model_headers
+
+    def can_group_models(self, models: List[str]) -> bool:
+        """Rule: >=2 techs with T3 on all models, and >=1 tech with >=T2 on all models."""
+        if not models:
+            return True
+
+        t3_count = 0
+        t2_plus_count = 0
+        for row in self.tech_rows:
+            vals = [row.get(m, "") for m in models]
+            if all(v == "T3" for v in vals):
+                t3_count += 1
+            if all(v in ("T2", "T3") for v in vals):
+                t2_plus_count += 1
+        return t3_count >= 2 and t2_plus_count >= 1
 
 
 class ExcelData:
@@ -379,26 +445,28 @@ class MachineLine(QFrame):
         row.addWidget(self.btn_delete)
 
         self._model_changed()
-    def _model_changed(self, *_):
-        model = self.cmb_model.currentText().strip()
+
+    def _set_training_visibility(self, model: str):
+        """Show/hide training checkbox without mutating checked state."""
         if model == "— Select —":
             model = ""
+        model = model.strip()
         if not model:
             self.chk_training.hide()
-            self.chk_training.setChecked(False)
-        else:
-            applicable = bool(self.training_applicable_map.get(model, True))
-            if not applicable:
-                self.chk_training.hide()
-                self.chk_training.setChecked(False)
-            else:
-                self.chk_training.show()
-                if not self.chk_training.isChecked():
-                    self.chk_training.setChecked(True)
+            return
+
+        applicable = bool(self.training_applicable_map.get(model, True))
+        if not applicable:
+            self.chk_training.hide()
+            return
+
+        self.chk_training.show()
+
+    def _model_changed(self, *_):
+        self._set_training_visibility(self.cmb_model.currentText())
         self.on_change()
 
     def _changed(self, *_):
-
         self.on_change()
 
     def _delete(self):
@@ -500,6 +568,10 @@ class MainWindow(QMainWindow):
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.lines: List[MachineLine] = []
 
+        self.skills_matrix: SkillsMatrix | None = None
+        self.skills_warning = ""
+        self._load_skills_matrix()
+
         central_container = QWidget()
         root = QVBoxLayout(central_container)
         root.setContentsMargins(0, 0, 0, 0)
@@ -531,6 +603,11 @@ class MainWindow(QMainWindow):
         btn_open_bundled.setToolTip("Open the Excel workbook that was bundled into this EXE (for verification).")
         btn_open_bundled.clicked.connect(self.open_bundled_excel)
         h.addWidget(btn_open_bundled)
+
+        btn_help = QPushButton("Help")
+        btn_help.setToolTip("Open the user guide and calculation notes (README).")
+        btn_help.clicked.connect(self.open_help)
+        h.addWidget(btn_help)
         root.addWidget(header)
 
         splitter = QSplitter(Qt.Horizontal)
@@ -582,6 +659,7 @@ class MainWindow(QMainWindow):
         self.lines_layout.addWidget(self.empty_hint)
 
         self.scroll.setWidget(container)
+        self.scroll.setMinimumHeight(240)
         left_l.addWidget(self.scroll, 1)
 
         btn_add = QPushButton("+  Add Machine")
@@ -646,15 +724,32 @@ class MainWindow(QMainWindow):
         sec_labor = Section("Labor Costs", "Labor costs by role at daily rates (8 hours/day).", "🛠")
         sec_labor.content_layout.addWidget(self.tbl_labor)
 
-        # Workload bar chart (bonus visual)
-        self.chart = QChart()
-        self.chart_view = QChartView(self.chart)
-        self.chart_view.setRenderHint(QPainter.Antialiasing)
-        self.chart_view.setMinimumHeight(300)
-        sec_chart = Section("Workload", "Days onsite per person (T=Tech, E=Engineer).", "📊")
-        sec_chart.content_layout.addWidget(self.chart_view)
+        # Workload calendar in Gantt style (2-week Sun-Sat view)
+        self.tbl_workload_calendar = QTableWidget(6, WORKLOAD_CALENDAR_DAYS)
+        self.tbl_workload_calendar.setObjectName("table")
+        self.tbl_workload_calendar.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.tbl_workload_calendar.setSelectionMode(QAbstractItemView.NoSelection)
+        self.tbl_workload_calendar.horizontalHeader().setDefaultSectionSize(24)
+        self.tbl_workload_calendar.verticalHeader().setDefaultSectionSize(26)
+        # Stretch day columns to consume available width now that the horizon is 14 days.
+        self.tbl_workload_calendar.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        cal_header_font = self.tbl_workload_calendar.horizontalHeader().font()
+        cal_header_font.setPointSizeF(max(7.0, cal_header_font.pointSizeF() - 1.0))
+        self.tbl_workload_calendar.horizontalHeader().setFont(cal_header_font)
+        self.tbl_workload_calendar.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.tbl_workload_calendar.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels([
+            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(WORKLOAD_CALENDAR_DAYS)
+        ])
+        self.tbl_workload_calendar.setMinimumHeight(320)
+        self.tbl_workload_calendar.setToolTip(
+            "Gantt trip view (2 weeks): light color = travel day, solid color = onsite day. "
+            "Tech uses #e04426 and Engineer uses #6790a0."
+        )
+        sec_chart = Section("Workload Calendar", "2-week Sun-Sat Gantt trip view.", "🗓️")
+        sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
 
-        # Left side: put chart under Machine Configuration so the right-side widgets stay readable
+        # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
         left_l.addWidget(sec_chart)
 
         right_l.addWidget(sec_breakdown)
@@ -797,30 +892,142 @@ class MainWindow(QMainWindow):
         self.btn_print.setEnabled(False)
         self.alert.hide()
         self.alert.setText("")
-        if hasattr(self, 'chart'):
-            try:
-                self.chart.removeAllSeries()
-                self.chart.setTitle('Workload (onsite days)')
-            except Exception:
-                pass
+        self._clear_workload_calendar()
 
     def add_line(self):
         if self.empty_hint is not None:
             self.empty_hint.hide()
         ln = MachineLine(self.models_sorted, self.training_app_map, on_change=self.recalc, on_delete=self.delete_line)
+        ln.cmb_model.currentIndexChanged.connect(self._refresh_model_choices)
         self.lines.append(ln)
         self.lines_layout.addWidget(ln)
+        self._refresh_model_choices()
         self.recalc()
 
     def delete_line(self, ln: MachineLine):
         self.lines.remove(ln)
         ln.setParent(None)
         ln.deleteLater()
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.empty_hint.show()
             self.reset_views()
         else:
             self.recalc()
+
+    def _refresh_model_choices(self):
+        """Prevent selecting the same machine model on multiple lines."""
+        if not self.lines:
+            return
+
+        selected = []
+        for ln in self.lines:
+            v = ln.value().model
+            if v:
+                selected.append(v)
+
+        for ln in self.lines:
+            current = ln.value().model
+            ln.cmb_model.blockSignals(True)
+            ln.cmb_model.clear()
+            ln.cmb_model.addItem("— Select —")
+            ln.cmb_model.addItems(self.models_sorted)
+
+            if current and current in self.models_sorted:
+                ln.cmb_model.setCurrentIndex(self.models_sorted.index(current) + 1)
+            else:
+                ln.cmb_model.setCurrentIndex(0)
+
+            # Disable models already chosen on other lines.
+            for idx, model in enumerate(self.models_sorted, start=1):
+                item = ln.cmb_model.model().item(idx)
+                if item is not None:
+                    item.setEnabled(not (model in selected and model != current))
+
+            ln.cmb_model.blockSignals(False)
+
+            model = ln.cmb_model.currentText().strip()
+            ln.chk_training.blockSignals(True)
+            try:
+                ln._set_training_visibility(model)
+            finally:
+                ln.chk_training.blockSignals(False)
+
+    def _load_skills_matrix(self):
+        self.skills_matrix = None
+        self.skills_warning = ""
+        try:
+            if SKILLS_MATRIX_EXCEL.exists():
+                self.skills_matrix = SkillsMatrix(SKILLS_MATRIX_EXCEL)
+            else:
+                self.skills_warning = (
+                    "Skills matrix file not found; using standard allocation behavior. "
+                    "Expected: assets/Machine Qualifications for PCP Quoting.xlsx"
+                )
+        except Exception as e:
+            self.skills_warning = f"Skills matrix unavailable ({e}); using standard allocation behavior."
+
+    @staticmethod
+    def _is_generic_model_name(model: str) -> bool:
+        upper = model.strip().upper()
+        if upper in GENERIC_MODEL_ALIASES:
+            return True
+        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
+
+    def _partition_tech_groups(self, selections: List[LineSelection]) -> Dict[str, List[LineSelection]]:
+        """Partition tech-only lines into crew pools driven by robot + skills-matrix rules."""
+        groups: Dict[str, List[LineSelection]] = {}
+
+        if not selections:
+            return groups
+
+        robot_lines = [s for s in selections if s.model in ROBOT_MODELS]
+        if robot_lines:
+            groups["Robot"] = robot_lines
+
+        tech_only = []
+        for s in selections:
+            mi = self.data.models[s.model]
+            if mi.eng_days_per_machine > 0 or s.model in ROBOT_MODELS:
+                continue
+            tech_only.append(s)
+
+        generic_lines = [s for s in tech_only if self._is_generic_model_name(s.model)]
+        candidate = [s for s in tech_only if s not in generic_lines]
+
+        if self.skills_matrix is None:
+            if candidate or generic_lines:
+                groups["Tech"] = candidate + generic_lines
+            return groups
+
+        skills_known = [s for s in candidate if self.skills_matrix.has_model(s.model)]
+        matrix_missing = [s for s in candidate if not self.skills_matrix.has_model(s.model)]
+
+        tech_groups: List[List[LineSelection]] = []
+        for line in skills_known:
+            placed = False
+            for grp in tech_groups:
+                models = sorted({x.model for x in grp + [line]})
+                if self.skills_matrix.can_group_models(models):
+                    grp.append(line)
+                    placed = True
+                    break
+            if not placed:
+                tech_groups.append([line])
+
+        supplemental = matrix_missing + generic_lines
+        if not tech_groups and supplemental:
+            tech_groups = [[]]
+
+        if tech_groups:
+            for i, line in enumerate(supplemental):
+                tech_groups[i % len(tech_groups)].append(line)
+            for i, grp in enumerate(tech_groups, 1):
+                groups[f"Tech {i}"] = grp
+        elif supplemental:
+            groups["Tech 1"] = supplemental
+
+        return groups
 
     def open_bundled_excel(self):
         """Open the bundled Excel workbook in the user's default spreadsheet app."""
@@ -842,17 +1049,71 @@ class MainWindow(QMainWindow):
         try:
             self.data = ExcelData(Path(fp))
             self.models_sorted = sorted(self.data.models.keys())
+            self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
             for ln in self.lines:
-                cur = ln.cmb_model.currentText()
-                ln.cmb_model.blockSignals(True)
-                ln.cmb_model.clear()
-                ln.cmb_model.addItems(self.models_sorted)
-                if cur in self.models_sorted:
-                    ln.cmb_model.setCurrentIndex(self.models_sorted.index(cur))
-                ln.cmb_model.blockSignals(False)
+                ln.training_applicable_map = self.training_app_map
+            self._refresh_model_choices()
             self.recalc()
         except Exception as e:
             QMessageBox.critical(self, "Excel load error", str(e))
+
+    def _find_readme_path(self) -> Path | None:
+        candidates = [
+            Path(__file__).resolve().parent / "README.md",
+            Path(__file__).resolve().parent.parent / "README.md",
+            Path.cwd() / "README.md",
+        ]
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidates.extend([
+                Path(meipass) / "README.md",
+                Path(meipass).parent / "README.md",
+            ])
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.extend([
+                exe_dir / "README.md",
+                exe_dir / "_internal" / "README.md",
+            ])
+        for p in candidates:
+            try:
+                if p.exists():
+                    return p
+            except Exception:
+                continue
+        return None
+
+    def open_help(self):
+        """Display README guidance in an in-app help dialog."""
+        try:
+            readme_path = self._find_readme_path()
+            if readme_path is not None:
+                text = readme_path.read_text(encoding="utf-8", errors="replace")
+                title = f"Help — {readme_path.name}"
+            else:
+                text = (
+                    "README.md was not found in this build.\n\n"
+                    "This tool estimates commissioning labor, expenses, and total quote values "
+                    "from selected machine models and rate data in Excel."
+                )
+                title = "Help"
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle(title)
+            dlg.resize(1000, 760)
+            lay = QVBoxLayout(dlg)
+            viewer = QTextBrowser(dlg)
+            viewer.setOpenExternalLinks(True)
+            if readme_path is not None:
+                try:
+                    viewer.setSearchPaths([str(readme_path.parent)])
+                except Exception:
+                    pass
+            viewer.setMarkdown(text)
+            lay.addWidget(viewer)
+            dlg.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Help error", str(e))
 
     def calc(self):
         selections = [ln.value() for ln in self.lines]
@@ -860,18 +1121,33 @@ class MainWindow(QMainWindow):
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
+        rpc_engineer_late_depart = any(s.model in ROBOT_MODELS for s in selections)
+
         window = int(self.spin_window.value())
 
         tech_hr, _ = self.data.get_rate("tech. regular time")
         eng_hr, _ = self.data.get_rate("eng. regular time")
+
+        def _read_rate_with_fallback(primary_key: str, fallback_key: str) -> float:
+            try:
+                rate, _ = self.data.get_rate(primary_key)
+                return float(rate)
+            except Exception:
+                rate, _ = self.data.get_rate(fallback_key)
+                return float(rate)
+
+        tech_ot_hr = _read_rate_with_fallback("tech. overtime", "tech. regular time")
+        eng_ot_hr = _read_rate_with_fallback("eng. overtime", "eng. regular time")
+
         hours_per_day = 8
         tech_day_rate = tech_hr * hours_per_day
         eng_day_rate = eng_hr * hours_per_day
 
         machine_rows = []
         assignments: List[Assignment] = []
-        tech_all: List[int] = []
         eng_all: List[int] = []
+
+        line_calc: Dict[str, Dict[str, int | bool]] = {}
 
         for s in selections:
             mi = self.data.models[s.model]
@@ -894,22 +1170,22 @@ class MainWindow(QMainWindow):
                         f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
                     )
 
-            tech_headcount = 0
+            line_calc[s.model] = {
+                "base_training": base_training,
+                "training_days": training_days,
+                "tech_total": tech_total,
+                "eng_training_potential": eng_training_potential,
+                "eng_training_days": eng_training_days,
+                "eng_total": eng_total,
+            }
+
             eng_headcount = 0
-
-            if tech_total > 0:
-                tech_alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, training_days, window)
-                tech_headcount = len(tech_alloc)
-                tech_all.extend(tech_alloc)
-                for i, d in enumerate(tech_alloc, 1):
-                    assignments.append(Assignment(s.model, "Technician", i, d, d * tech_day_rate))
-
             if eng_total > 0:
                 eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
                 eng_headcount = len(eng_alloc)
                 eng_all.extend(eng_alloc)
                 for i, d in enumerate(eng_alloc, 1):
-                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate))
+                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate, "Engineer"))
 
             machine_rows.append({
                 "model": s.model,
@@ -922,12 +1198,99 @@ class MainWindow(QMainWindow):
                 "eng_training_potential": eng_training_potential,
                 "tech_total": tech_total,
                 "eng_total": eng_total,
-                "tech_headcount": tech_headcount,
-                "eng_headcount": eng_headcount
+                "tech_headcount": 0,
+                "eng_headcount": eng_headcount,
             })
 
-        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, float(sum(tech_all)) * tech_day_rate)
-        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, float(sum(eng_all)) * eng_day_rate)
+        # Technician allocation with skills-matrix grouping.
+        group_map = self._partition_tech_groups(selections)
+        tech_group_loads: Dict[str, List[int]] = {}
+        tech_group_members: Dict[str, List[str]] = {}
+
+        for group_name, group_lines in group_map.items():
+            if not group_lines:
+                continue
+            tech_group_members[group_name] = [x.model for x in group_lines]
+            pool_loads: List[int] = []
+            for s in group_lines:
+                mi = self.data.models[s.model]
+                info = line_calc[s.model]
+                if int(info["tech_total"]) <= 0:
+                    continue
+
+                if self._is_generic_model_name(s.model):
+                    total_days = int(info["tech_total"])
+                    if pool_loads:
+                        extra = balanced_allocate(total_days, len(pool_loads))
+                        pool_loads = [pool_loads[i] + extra[i] for i in range(len(pool_loads))]
+                    else:
+                        pool_loads = balanced_allocate(total_days, 1)
+                else:
+                    alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
+                    if not pool_loads:
+                        pool_loads = list(alloc)
+                    else:
+                        needed = len(alloc)
+                        if len(pool_loads) < needed:
+                            pool_loads.extend([0] * (needed - len(pool_loads)))
+                        for i, d in enumerate(alloc):
+                            pool_loads[i] += d
+                    if pool_loads and max(pool_loads) > window:
+                        total_pool_days = sum(pool_loads)
+                        min_heads = ceil_int(total_pool_days / window)
+                        min_heads = max(min_heads, len(pool_loads))
+                        pool_loads = balanced_allocate(total_pool_days, min_heads)
+
+            pool_loads = sorted(pool_loads, reverse=True)
+            tech_group_loads[group_name] = pool_loads
+
+            for idx, row in enumerate(machine_rows):
+                if row["model"] in tech_group_members[group_name]:
+                    machine_rows[idx]["tech_headcount"] = len(pool_loads) if int(row["tech_total"]) > 0 else 0
+
+            for i, d in enumerate(pool_loads, 1):
+                assignments.append(Assignment(
+                    ", ".join(sorted(set(tech_group_members[group_name]))),
+                    "Technician",
+                    i,
+                    d,
+                    d * tech_day_rate,
+                    group_name,
+                ))
+
+        tech_all = [d for loads in tech_group_loads.values() for d in loads]
+
+        def _weekend_onsite_days(onsite_by_person: List[int], travel_in_day: int) -> int:
+            weekend_days = 0
+            for onsite_days in onsite_by_person:
+                days = int(onsite_days or 0)
+                if days <= 0:
+                    continue
+                onsite_start = int(travel_in_day) + 1
+                onsite_end = onsite_start + days - 1
+                for day in range(onsite_start, onsite_end + 1):
+                    day_of_week = ((day - 1) % 7) + 1  # 1=Sun ... 7=Sat
+                    if day_of_week in (1, 7):
+                        weekend_days += 1
+            return weekend_days
+
+        tech_weekend_days = _weekend_onsite_days(tech_all, travel_in_day=1)
+        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=(2 if rpc_engineer_late_depart else 1))
+
+        tech_regular_days = max(0, int(sum(tech_all)) - tech_weekend_days)
+        eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
+        tech_ot_hours = tech_weekend_days * hours_per_day
+        eng_ot_hours = eng_weekend_days * hours_per_day
+        tech_ot_day_rate = tech_ot_hr * hours_per_day
+        eng_ot_day_rate = eng_ot_hr * hours_per_day
+
+        tech_regular_cost = float(tech_regular_days) * tech_day_rate
+        eng_regular_cost = float(eng_regular_days) * eng_day_rate
+        tech_ot_cost = float(tech_ot_hours) * tech_ot_hr
+        eng_ot_cost = float(eng_ot_hours) * eng_ot_hr
+
+        tech = RoleTotals(len(tech_all), sum(tech_all), sorted(tech_all, reverse=True), tech_day_rate, tech_regular_cost + tech_ot_cost)
+        eng = RoleTotals(len(eng_all), sum(eng_all), sorted(eng_all, reverse=True), eng_day_rate, eng_regular_cost + eng_ot_cost)
 
         trip_days_by_person = [a.onsite_days + TRAVEL_DAYS_PER_PERSON for a in assignments]
         n_people = len(trip_days_by_person)
@@ -969,7 +1332,21 @@ class MainWindow(QMainWindow):
             "n_people": n_people,
             "total_trip_days": total_trip_days,
             "exp_total": exp_total,
-            "grand_total": grand_total
+            "grand_total": grand_total,
+            "skills_warning": self.skills_warning,
+            "rpc_engineer_late_depart": rpc_engineer_late_depart,
+            "tech_regular_days": tech_regular_days,
+            "eng_regular_days": eng_regular_days,
+            "tech_ot_hours": tech_ot_hours,
+            "eng_ot_hours": eng_ot_hours,
+            "tech_ot_rate": tech_ot_hr,
+            "eng_ot_rate": eng_ot_hr,
+            "tech_ot_days": tech_weekend_days,
+            "eng_ot_days": eng_weekend_days,
+            "tech_ot_day_rate": tech_ot_day_rate,
+            "eng_ot_day_rate": eng_ot_day_rate,
+            "tech_ot_cost": tech_ot_cost,
+            "eng_ot_cost": eng_ot_cost,
         }
         return tech, eng, exp_lines, meta
 
@@ -995,105 +1372,68 @@ class MainWindow(QMainWindow):
 
     
     
-    def update_workload_chart(self, tech: RoleTotals, eng: RoleTotals):
-        """Polished horizontal stacked bar chart of onsite + travel days by person."""
-        labels: List[str] = []
-        tech_vals: List[int] = []
-        eng_vals: List[int] = []
+    def _clear_workload_calendar(self, rows: int = 6):
+        rows = max(6, int(rows or 0))
+        self.tbl_workload_calendar.clearContents()
+        self.tbl_workload_calendar.setRowCount(rows)
+        self.tbl_workload_calendar.setColumnCount(WORKLOAD_CALENDAR_DAYS)
+        self.tbl_workload_calendar.setHorizontalHeaderLabels(
+            [["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][i % 7] for i in range(WORKLOAD_CALENDAR_DAYS)]
+        )
+        for r in range(rows):
+            self.tbl_workload_calendar.setRowHeight(r, 26)
+            for c in range(WORKLOAD_CALENDAR_DAYS):
+                it = QTableWidgetItem("")
+                it.setTextAlignment(Qt.AlignCenter)
+                self.tbl_workload_calendar.setItem(r, c, it)
 
-        for d in tech.onsite_days_by_person:
-            labels.append(f"T{len(tech_vals)+1}")
-            tech_vals.append(int(d))
+    def _render_workload_calendar(self, tech: RoleTotals, eng: RoleTotals, meta: Dict):
+        """Render a 2-week Sun-Sat Gantt-style calendar (rows=people, cols=days)."""
 
-        for d in eng.onsite_days_by_person:
-            labels.append(f"E{len(eng_vals)+1}")
-            eng_vals.append(int(d))
+        # Default assumptions:
+        # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
+        # - Engineer same, except RPC jobs depart one day later (Monday/day 2)
+        tech_travel_in = 1
+        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
 
-        self.chart.removeAllSeries()
-        self.chart.setTitle("Workload (days)")
-        self.chart.setBackgroundRoundness(8)
-        self.chart.setAnimationOptions(QChart.SeriesAnimations)
+        people = []
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            people.append((f"T{i}", int(d), tech_travel_in, QColor("#e04426")))
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            people.append((f"E{i}", int(d), eng_travel_in, QColor("#6790a0")))
 
-        if len(labels) == 0:
-            return
+        self._clear_workload_calendar(rows=len(people))
+        labels = [p[0] for p in people] + [""] * max(0, self.tbl_workload_calendar.rowCount() - len(people))
+        self.tbl_workload_calendar.setVerticalHeaderLabels(labels)
 
-        # Colors (match UI theme)
-        tech_color = QColor("#e04426")  # Tech bar
-        eng_color = QColor("#6790a0")   # Engineer bar
-        tech_travel = QColor(tech_color); tech_travel.setAlpha(110)
-        eng_travel = QColor(eng_color); eng_travel.setAlpha(110)
+        for row, (_label, onsite_days, travel_in_day, base_color) in enumerate(people):
+            if onsite_days <= 0:
+                continue
 
-        series = QHorizontalStackedBarSeries()
+            travel_color = QColor(base_color)
+            travel_color.setAlpha(115)
 
-        set_tech_on = QBarSet("Tech")
-        set_tech_tr = QBarSet("Tech travel")
-        set_eng_on = QBarSet("Eng")
-        set_eng_tr = QBarSet("Eng travel")
+            onsite_start = travel_in_day + 1
+            onsite_end = onsite_start + onsite_days - 1
+            travel_out = onsite_end + 1
 
-        set_tech_on.setColor(tech_color)
-        set_tech_tr.setColor(tech_travel)
-        set_eng_on.setColor(eng_color)
-        set_eng_tr.setColor(eng_travel)
+            # Travel in/out
+            for day in (travel_in_day, travel_out):
+                if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                    item = self.tbl_workload_calendar.item(row, day - 1)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        self.tbl_workload_calendar.setItem(row, day - 1, item)
+                    item.setBackground(travel_color)
 
-        n = len(labels)
-        # Build arrays aligned to labels: first tech people then engineer people
-        for i in range(n):
-            is_tech = labels[i].startswith("T")
-            if is_tech:
-                v = tech_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(float(v))
-                set_tech_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-                set_eng_on.append(0.0)
-                set_eng_tr.append(0.0)
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-                set_tech_on.append(0.0)
-                set_tech_tr.append(0.0)
-                set_eng_on.append(float(v))
-                set_eng_tr.append(float(TRAVEL_DAYS_PER_PERSON) if v > 0 else 0.0)
-
-        series.append(set_tech_on)
-        series.append(set_tech_tr)
-        series.append(set_eng_on)
-        series.append(set_eng_tr)
-
-        self.chart.addSeries(series)
-
-        axis_y = QBarCategoryAxis()
-        axis_y.append(labels)
-
-        totals = []
-        for i in range(n):
-            if labels[i].startswith("T"):
-                v = tech_vals[int(labels[i][1:]) - 1]
-            else:
-                v = eng_vals[int(labels[i][1:]) - 1]
-            totals.append(v + (TRAVEL_DAYS_PER_PERSON if v > 0 else 0))
-        max_v = max(totals) if totals else 1
-
-        axis_x = QValueAxis()
-        axis_x.setRange(0, max(1, int(max_v)))
-        axis_x.setLabelFormat("%d")
-        axis_x.setTickCount(min(10, max(2, int(max_v) + 1)))
-
-        for ax in list(self.chart.axes()):
-            self.chart.removeAxis(ax)
-
-        self.chart.addAxis(axis_y, Qt.AlignLeft)
-        self.chart.addAxis(axis_x, Qt.AlignBottom)
-        series.attachAxis(axis_y)
-        series.attachAxis(axis_x)
-
-        # Labels/legend polish
-        try:
-            series.setLabelsVisible(True)
-            series.setLabelsPosition(series.LabelsInsideEnd)
-            series.setLabelsFormat("@value")
-        except Exception:
-            pass
-
-        self.chart.legend().setVisible(True)
-        self.chart.legend().setAlignment(Qt.AlignBottom)
+            # Onsite solid bar
+            for day in range(onsite_start, onsite_end + 1):
+                if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                    item = self.tbl_workload_calendar.item(row, day - 1)
+                    if item is None:
+                        item = QTableWidgetItem("")
+                        self.tbl_workload_calendar.setItem(row, day - 1, item)
+                    item.setBackground(base_color)
 
     def recalc(self):
         if len(self.lines) == 0:
@@ -1101,14 +1441,18 @@ class MainWindow(QMainWindow):
             return
         try:
             tech, eng, exp_lines, meta = self.calc()
-            self.alert.hide()
+            if meta.get("skills_warning"):
+                self.alert.setText(str(meta.get("skills_warning")))
+                self.alert.show()
+            else:
+                self.alert.hide()
 
             self.card_tech.set_value(str(tech.headcount), f"{tech.total_onsite_days} total days")
             self.card_eng.set_value(str(eng.headcount), f"{eng.total_onsite_days} total days")
             self.card_window.set_value(f"{meta['max_onsite']} days", f"install window {meta['window']} days")
             self.card_total.set_value(money(meta["grand_total"]), "labor + expenses")
 
-            self.update_workload_chart(tech, eng)
+            self._render_workload_calendar(tech, eng, meta)
             self.lbl_total_val.setText(money(meta["grand_total"]))
 
             rows = meta["machine_rows"]
@@ -1160,10 +1504,12 @@ class MainWindow(QMainWindow):
                         it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.tbl_assign.setItem(i, c, it)
 
-            self.tbl_labor.setRowCount(3)
+            self.tbl_labor.setRowCount(5)
             labor_rows = [
-                ("Technician", money(tech.day_rate) + "/day", str(tech.total_onsite_days), str(tech.headcount), money(tech.labor_cost)),
-                ("Engineer", money(eng.day_rate) + "/day", str(eng.total_onsite_days), str(eng.headcount), money(eng.labor_cost)),
+                ("Tech. Regular Time", money(tech.day_rate) + "/day", str(meta.get("tech_regular_days", tech.total_onsite_days)), str(tech.headcount), money((meta.get("tech_regular_days", tech.total_onsite_days)) * tech.day_rate)),
+                ("Tech. Overtime (Sat/Sun)", money(meta.get("tech_ot_day_rate", 0.0)) + "/day", str(meta.get("tech_ot_days", 0)), str(tech.headcount), money(meta.get("tech_ot_cost", 0.0))),
+                ("Eng. Regular Time", money(eng.day_rate) + "/day", str(meta.get("eng_regular_days", eng.total_onsite_days)), str(eng.headcount), money((meta.get("eng_regular_days", eng.total_onsite_days)) * eng.day_rate)),
+                ("Eng. Overtime (Sat/Sun)", money(meta.get("eng_ot_day_rate", 0.0)) + "/day", str(meta.get("eng_ot_days", 0)), str(eng.headcount), money(meta.get("eng_ot_cost", 0.0))),
             ]
             for r_i, row in enumerate(labor_rows):
                 for c, v in enumerate(row):
@@ -1177,13 +1523,13 @@ class MainWindow(QMainWindow):
 
             # Subtotal row
             labor_subtotal = tech.labor_cost + eng.labor_cost
-            self.tbl_labor.setItem(2, 0, QTableWidgetItem("Subtotal"))
-            self.tbl_labor.setItem(2, 1, QTableWidgetItem(""))
-            self.tbl_labor.setItem(2, 2, QTableWidgetItem(""))
-            self.tbl_labor.setItem(2, 3, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 0, QTableWidgetItem("Subtotal"))
+            self.tbl_labor.setItem(4, 1, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 2, QTableWidgetItem(""))
+            self.tbl_labor.setItem(4, 3, QTableWidgetItem(""))
             it = QTableWidgetItem(money(labor_subtotal))
             it.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            self.tbl_labor.setItem(2, 4, it)
+            self.tbl_labor.setItem(4, 4, it)
 
             self.lbl_exp_hdr.setText(
                 f"Expenses are calculated using person-days, including {TRAVEL_DAYS_PER_PERSON} travel days per person."
@@ -1223,7 +1569,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" height="36" style="height:36px;" />'
+                logo_html = f'<img class="quote-logo" src="data:image/png;base64,{b64}" alt="Pearson" />'
             except Exception:
                 logo_html = ""
 
@@ -1266,6 +1612,54 @@ class MainWindow(QMainWindow):
                 <td style="text-align:right;">{money(l.extended)}</td>
             </tr>""")
 
+        # Build printable workload calendar (same 14-day Gantt concept used in the UI).
+        tech_travel_in = 1
+        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
+        people = []
+        for i, d in enumerate(tech.onsite_days_by_person, start=1):
+            people.append((f"T{i}", int(d), tech_travel_in, "#e04426"))
+        for i, d in enumerate(eng.onsite_days_by_person, start=1):
+            people.append((f"E{i}", int(d), eng_travel_in, "#6790a0"))
+
+        day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        cal_head = "".join([f"<th>{day_labels[i % 7]}</th>" for i in range(WORKLOAD_CALENDAR_DAYS)])
+
+        def _lighten_hex(color_hex: str, amt: float = 0.58) -> str:
+            color_hex = color_hex.strip().lstrip("#")
+            if len(color_hex) != 6:
+                return "#d7dce2"
+            r = int(color_hex[0:2], 16)
+            g = int(color_hex[2:4], 16)
+            b = int(color_hex[4:6], 16)
+            r = int(r + (255 - r) * amt)
+            g = int(g + (255 - g) * amt)
+            b = int(b + (255 - b) * amt)
+            return f"#{r:02x}{g:02x}{b:02x}"
+
+        cal_rows = []
+        for label, onsite_days, travel_in_day, base_color in people:
+            cells = ["<td></td>" for _ in range(WORKLOAD_CALENDAR_DAYS)]
+            if onsite_days > 0:
+                onsite_start = travel_in_day + 1
+                onsite_end = onsite_start + onsite_days - 1
+                travel_out = onsite_end + 1
+                travel_color = _lighten_hex(base_color)
+                for day in (travel_in_day, travel_out):
+                    if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                        cells[day - 1] = f'<td class="cal-travel" style="background:{travel_color};"></td>'
+                for day in range(onsite_start, onsite_end + 1):
+                    if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
+                        cells[day - 1] = f'<td class="cal-onsite" style="background:{base_color};"></td>'
+            cal_rows.append(f"<tr><th class=\"cal-person\">{label}</th>{''.join(cells)}</tr>")
+
+        workload_calendar_html = f"""
+            <h3>Workload Calendar</h3>
+            <table class="grid grid-calendar">
+                <tr><th class="cal-person">Person</th>{cal_head}</tr>
+                {''.join(cal_rows) if cal_rows else f'<tr><td colspan="{WORKLOAD_CALENDAR_DAYS + 1}" class="muted">No personnel assigned.</td></tr>'}
+            </table>
+        """
+
         labor_sub = tech.labor_cost + eng.labor_cost
 
         req_html = ""
@@ -1273,31 +1667,47 @@ class MainWindow(QMainWindow):
             li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
             req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
 
+        header_html = f"""
+            <table width="100%" class="topbar" role="presentation">
+                <tr>
+                    <td align="left" valign="top">
+                        <p class="title">Commissioning Budget Quote</p>
+                        <p class="subtitle muted">Service Estimate</p>
+                    </td>
+                    <td align="right" valign="top">
+                        {logo_html}
+                    </td>
+                </tr>
+            </table>
+        """
+
         html = f"""<html><head><meta charset="utf-8" />
         <style>
+            @page {{ size: Letter; margin: 0.5in; }}
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-bottom: 14px; }}
-            .logo {{ text-align:right; }}
+            .topbar {{ width: 100%; border-collapse: collapse; border-bottom: 3px solid #F05A28; margin: 0 0 12px 0; }}
+            .topbar td {{ padding: 0 0 8px 0; }}
+            .quote-logo {{ height: 36px; width: auto; display: inline-block; margin: 0; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
-            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
             .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid-calendar th, .grid-calendar td {{ padding: 4px; text-align: center; }}
+            .grid-calendar th.cal-person {{ width: 60px; text-align: left; }}
+            .grid-calendar td.cal-travel {{ }}
+            .grid-calendar td.cal-onsite {{ }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
+            .spacer-one-line {{ height: 12px; }}
+            .new-page {{ page-break-before: always; }}
             h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
             .muted {{ color: #6D6E71; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
-            <div class="topbar">
-                <div>
-                    <p class="title">Commissioning Budget Quote</p>
-                    <p class="subtitle muted">Service Estimate</p>
-                </div>
-                <div class="logo">{logo_html}</div>
-            </div>
+            {header_html}
 
             <div class="two">
                 <div class="box">
@@ -1318,14 +1728,21 @@ class MainWindow(QMainWindow):
                 {''.join(mr)}
             </table>
 
+            {workload_calendar_html}
+
+            <div class="spacer-one-line"></div>
             <h3>Labor Costs</h3>
             <table class="grid">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
-                <tr><td>Tech. Regular Time ({tech.total_onsite_days} days × {money(tech.day_rate)}/day)</td><td class="right">{money(tech.labor_cost)}</td></tr>
-                <tr><td>Eng. Regular Time ({eng.total_onsite_days} days × {money(eng.day_rate)}/day)</td><td class="right">{money(eng.labor_cost)}</td></tr>
+                <tr><td>Tech. Regular Time ({meta.get("tech_regular_days", tech.total_onsite_days)} days × {money(tech.day_rate)}/day)</td><td class="right">{money(meta.get("tech_regular_days", tech.total_onsite_days) * tech.day_rate)}</td></tr>
+                <tr><td>Tech. Overtime (Sat/Sun) ({meta.get("tech_ot_days", 0)} day × {money(meta.get("tech_ot_day_rate", 0.0))}/day)</td><td class="right">{money(meta.get("tech_ot_cost", 0.0))}</td></tr>
+                <tr><td>Eng. Regular Time ({meta.get("eng_regular_days", eng.total_onsite_days)} days × {money(eng.day_rate)}/day)</td><td class="right">{money(meta.get("eng_regular_days", eng.total_onsite_days) * eng.day_rate)}</td></tr>
+                <tr><td>Eng. Overtime (Sat/Sun) ({meta.get("eng_ot_days", 0)} day × {money(meta.get("eng_ot_day_rate", 0.0))}/day)</td><td class="right">{money(meta.get("eng_ot_cost", 0.0))}</td></tr>
                 <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
             </table>
 
+            <div class="new-page"></div>
+            {header_html}
             <h3>Estimated Expenses</h3>
             <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
             <table class="grid">
@@ -1424,7 +1841,7 @@ class MainWindow(QMainWindow):
             # multiple machine lines are visible without feeling cramped.
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
+                    self.scroll.setMinimumHeight(240)
                     self.scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             except Exception:
                 pass
@@ -1448,7 +1865,7 @@ class MainWindow(QMainWindow):
             # Restore default sizing for wide (two-column) mode.
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(0)
+                    self.scroll.setMinimumHeight(240)
             except Exception:
                 pass
 
@@ -1457,7 +1874,7 @@ class MainWindow(QMainWindow):
             self._update_right_scroll_height_if_stacked()
             try:
                 if hasattr(self, "scroll"):
-                    self.scroll.setMinimumHeight(320)
+                    self.scroll.setMinimumHeight(240)
             except Exception:
                 pass
 
