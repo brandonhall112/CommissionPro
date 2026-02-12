@@ -100,7 +100,11 @@ Colors:
 RPC rule:
 
 - Tech travel-in defaults to Sunday.
+<<<<<<< codex/connect-to-repository-eb9fvy
+- Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+=======
 - Engineer travel-in is shifted to Monday when any RPC model is present.
+>>>>>>> main
 
 ---
 

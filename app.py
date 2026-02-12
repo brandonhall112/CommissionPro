@@ -98,6 +98,7 @@ SKILLS_MATRIX_EXCEL = ASSETS_DIR / "Machine Qualifications for PCP Quoting.xlsx"
 LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
 
 RPC_MODELS = {"RPC-C", "RPC-DF", "RPC-PH", "RPC-OU"}
+RPC_ENGINEER_TUESDAY_MODELS = {"RPC-PH", "RPC-OU"}
 GENERIC_MODEL_ALIASES = {
     "CONV",
     "PRODUCTION SUPPORT DAY",
@@ -1125,7 +1126,17 @@ class MainWindow(QMainWindow):
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
+<<<<<<< codex/connect-to-repository-eb9fvy
+        selected_models = {s.model for s in selections}
+        if any(m in RPC_ENGINEER_TUESDAY_MODELS for m in selected_models):
+            eng_travel_in_day = 3  # Tuesday
+        elif any(m in RPC_MODELS for m in selected_models):
+            eng_travel_in_day = 2  # Monday
+        else:
+            eng_travel_in_day = 1  # Sunday
+=======
         rpc_engineer_late_depart = any(s.model in RPC_MODELS for s in selections)
+>>>>>>> main
 
         window = int(self.spin_window.value())
 
@@ -1320,7 +1331,11 @@ class MainWindow(QMainWindow):
             return weekend_days
 
         tech_weekend_days = _weekend_onsite_days(tech_all, travel_in_day=1)
+<<<<<<< codex/connect-to-repository-eb9fvy
+        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=eng_travel_in_day)
+=======
         eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=(2 if rpc_engineer_late_depart else 1))
+>>>>>>> main
 
         tech_regular_days = max(0, int(sum(tech_all)) - tech_weekend_days)
         eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
@@ -1379,7 +1394,11 @@ class MainWindow(QMainWindow):
             "exp_total": exp_total,
             "grand_total": grand_total,
             "skills_warning": self.skills_warning,
+<<<<<<< codex/connect-to-repository-eb9fvy
+            "eng_travel_in_day": eng_travel_in_day,
+=======
             "rpc_engineer_late_depart": rpc_engineer_late_depart,
+>>>>>>> main
             "tech_regular_days": tech_regular_days,
             "eng_regular_days": eng_regular_days,
             "tech_ot_hours": tech_ot_hours,
@@ -1437,9 +1456,15 @@ class MainWindow(QMainWindow):
 
         # Default assumptions:
         # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
+<<<<<<< codex/connect-to-repository-eb9fvy
+        # - Engineer travel-in depends on RPC mix (Sun/Monday/Tuesday rules)
+        tech_travel_in = 1
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+=======
         # - Engineer same, except RPC jobs depart one day later (Monday/day 2)
         tech_travel_in = 1
         eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
+>>>>>>> main
 
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
@@ -1662,7 +1687,11 @@ class MainWindow(QMainWindow):
 
         # Build printable workload calendar (same 14-day Gantt concept used in the UI).
         tech_travel_in = 1
+<<<<<<< codex/connect-to-repository-eb9fvy
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+=======
         eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
+>>>>>>> main
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
             people.append((f"T{i}", int(d), tech_travel_in, "#e04426"))
