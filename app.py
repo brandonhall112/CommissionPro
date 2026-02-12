@@ -97,7 +97,7 @@ DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
 SKILLS_MATRIX_EXCEL = ASSETS_DIR / "Machine Qualifications for PCP Quoting.xlsx"
 LOGO_PATH = ASSETS_DIR / "Pearson Logo.png"
 
-ROBOT_MODELS = {"RPC-C", "RPC-DF"}
+RPC_MODELS = {"RPC-C", "RPC-DF", "RPC-PH", "RPC-OU"}
 GENERIC_MODEL_ALIASES = {
     "CONV",
     "PRODUCTION SUPPORT DAY",
@@ -976,20 +976,20 @@ class MainWindow(QMainWindow):
         return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
 
     def _partition_tech_groups(self, selections: List[LineSelection]) -> Dict[str, List[LineSelection]]:
-        """Partition tech-only lines into crew pools driven by robot + skills-matrix rules."""
+        """Partition tech-only lines into crew pools driven by RPC + skills-matrix rules."""
         groups: Dict[str, List[LineSelection]] = {}
 
         if not selections:
             return groups
 
-        robot_lines = [s for s in selections if s.model in ROBOT_MODELS]
+        robot_lines = [s for s in selections if s.model in RPC_MODELS]
         if robot_lines:
-            groups["Robot"] = robot_lines
+            groups["RPC"] = robot_lines
 
         tech_only = []
         for s in selections:
             mi = self.data.models[s.model]
-            if mi.eng_days_per_machine > 0 or s.model in ROBOT_MODELS:
+            if mi.eng_days_per_machine > 0 or s.model in RPC_MODELS:
                 continue
             tech_only.append(s)
 
@@ -1122,7 +1122,7 @@ class MainWindow(QMainWindow):
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
-        rpc_engineer_late_depart = any(s.model in ROBOT_MODELS for s in selections)
+        rpc_engineer_late_depart = any(s.model in RPC_MODELS for s in selections)
 
         window = int(self.spin_window.value())
 
@@ -1181,12 +1181,6 @@ class MainWindow(QMainWindow):
             }
 
             eng_headcount = 0
-            if eng_total > 0:
-                eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, eng_training_days, window)
-                eng_headcount = len(eng_alloc)
-                eng_all.extend(eng_alloc)
-                for i, d in enumerate(eng_alloc, 1):
-                    assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate, "Engineer"))
 
             machine_rows.append({
                 "model": s.model,
@@ -1202,6 +1196,53 @@ class MainWindow(QMainWindow):
                 "tech_headcount": 0,
                 "eng_headcount": eng_headcount,
             })
+
+        # Engineer allocation: RPC models share a dedicated RPC engineer pool,
+        # and never mix with non-RPC work.
+        rpc_engineer_lines = [s for s in selections if s.model in RPC_MODELS and int(line_calc[s.model]["eng_total"]) > 0]
+        non_rpc_engineer_lines = [s for s in selections if s.model not in RPC_MODELS and int(line_calc[s.model]["eng_total"]) > 0]
+
+        rpc_eng_pool: List[int] = []
+        rpc_eng_models: List[str] = []
+        for s in rpc_engineer_lines:
+            mi = self.data.models[s.model]
+            info = line_calc[s.model]
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), window)
+            rpc_eng_models.append(s.model)
+            if not rpc_eng_pool:
+                rpc_eng_pool = list(eng_alloc)
+            else:
+                needed = len(eng_alloc)
+                if len(rpc_eng_pool) < needed:
+                    rpc_eng_pool.extend([0] * (needed - len(rpc_eng_pool)))
+                for i, d in enumerate(eng_alloc):
+                    rpc_eng_pool[i] += d
+            if rpc_eng_pool and max(rpc_eng_pool) > window:
+                total_pool_days = sum(rpc_eng_pool)
+                min_heads = ceil_int(total_pool_days / window)
+                min_heads = max(min_heads, len(rpc_eng_pool))
+                rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
+
+        rpc_eng_pool = sorted(rpc_eng_pool, reverse=True)
+        if rpc_eng_pool:
+            rpc_model_set = sorted(set(rpc_eng_models))
+            for idx, row in enumerate(machine_rows):
+                if row["model"] in rpc_model_set:
+                    machine_rows[idx]["eng_headcount"] = len(rpc_eng_pool)
+            for i, d in enumerate(rpc_eng_pool, 1):
+                assignments.append(Assignment(", ".join(rpc_model_set), "Engineer", i, d, d * eng_day_rate, "Engineer RPC"))
+            eng_all.extend(rpc_eng_pool)
+
+        for s in non_rpc_engineer_lines:
+            info = line_calc[s.model]
+            mi = self.data.models[s.model]
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), window)
+            eng_all.extend(eng_alloc)
+            for idx, row in enumerate(machine_rows):
+                if row["model"] == s.model:
+                    machine_rows[idx]["eng_headcount"] = len(eng_alloc)
+            for i, d in enumerate(eng_alloc, 1):
+                assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate, "Engineer"))
 
         # Technician allocation with skills-matrix grouping.
         group_map = self._partition_tech_groups(selections)
