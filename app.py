@@ -1832,8 +1832,9 @@ class MainWindow(QMainWindow):
             .grid-calendar td.cal-travel {{ }}
             .grid-calendar td.cal-onsite {{ }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
-            .two {{ display: table; width: 100%; }}
-            .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
+            .summary-two {{ width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; }}
+            .summary-two td {{ width: 50%; vertical-align: top; padding-right: 10px; }}
+            .summary-two td:last-child {{ padding-right: 0; padding-left: 10px; }}
             .spacer-one-line {{ height: 24px; line-height: 24px; font-size: 1px; }}
             .new-page {{ page-break-before: always; }}
             h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
@@ -1843,19 +1844,25 @@ class MainWindow(QMainWindow):
         </style></head><body>
             {header_html}
 
-            <div class="two">
-                <div class="box">
-                    <b>Customer Name:</b><br/>{_esc(hdr_customer)}<br/><br/>
-                    <b>Reference:</b><br/>{_esc(hdr_reference)}<br/><br/>
-                    <b>Submitted to:</b><br/>{submitted_html}
-                </div>
-                <div class="box">
-                    <b>Prepared By:</b><br/>{_esc(hdr_prepared)}<br/><br/>
-                    <b>Quote Validity:</b><br/>{valid_str}<br/><br/>
-                    <b>Total Personnel:</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)<br/><br/>
-                    <b>Estimated Duration:</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
-                </div>
-            </div>
+            <table class="summary-two" role="presentation">
+                <tr>
+                    <td>
+                        <div class="box">
+                            <b>Customer Name:</b><br/>{_esc(hdr_customer)}<br/><br/>
+                            <b>Reference:</b><br/>{_esc(hdr_reference)}<br/><br/>
+                            <b>Submitted to:</b><br/>{submitted_html}
+                        </div>
+                    </td>
+                    <td>
+                        <div class="box">
+                            <b>Prepared By:</b><br/>{_esc(hdr_prepared)}<br/><br/>
+                            <b>Quote Validity:</b><br/>{valid_str}<br/><br/>
+                            <b>Total Personnel:</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)<br/><br/>
+                            <b>Estimated Duration:</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
+                        </div>
+                    </td>
+                </tr>
+            </table>
             <div class="section-spacer"></div>
 
             <h3>Machine Breakdown</h3>
