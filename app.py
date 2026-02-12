@@ -749,6 +749,9 @@ class MainWindow(QMainWindow):
         )
         sec_chart = Section("Workload Calendar", "2-week Sun-Sat Gantt trip view.", "🗓️")
         sec_chart.content_layout.addWidget(self.tbl_workload_calendar)
+        cal_legend = QLabel("Legend: Light shade = travel day · Dark shade = onsite day")
+        cal_legend.setObjectName("muted")
+        sec_chart.content_layout.addWidget(cal_legend)
 
         # Left side: put calendar under Machine Configuration so the right-side widgets stay readable
         left_l.addWidget(sec_chart)
@@ -1703,6 +1706,7 @@ class MainWindow(QMainWindow):
                 <tr><th class="cal-person">Person</th>{cal_head}</tr>
                 {''.join(cal_rows) if cal_rows else f'<tr><td colspan="{WORKLOAD_CALENDAR_DAYS + 1}" class="muted">No personnel assigned.</td></tr>'}
             </table>
+            <div class="muted">Legend: Light shade = travel day · Dark shade = onsite day</div>
         """
 
         labor_sub = tech.labor_cost + eng.labor_cost

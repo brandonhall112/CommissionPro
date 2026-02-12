@@ -73,11 +73,12 @@ When multiple people are required, days are distributed to minimize peak individ
 Tech-only lines are partitioned into crew pools using the optional skills matrix.
 Rules include:
 
-- RPC-C / RPC-DF treated as robot grouping logic
+- RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are always grouped together in a dedicated RPC pool
 - generic/support lines treated as non-blocking
 - matrix-missing models treated as supplemental and distributed safely
 
 If skills matrix is missing/unreadable, the app falls back to baseline allocation and shows a non-fatal warning.
+- RPC staffing is isolated from non-RPC staffing (no cross-pollination across pools).
 
 ---
 
@@ -89,6 +90,7 @@ The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
 - Columns = day slots
 - Light bar = travel day
 - Solid bar = onsite day
+- Printed quote includes the same legend directly below the calendar table.
 
 Colors:
 
@@ -98,7 +100,7 @@ Colors:
 RPC rule:
 
 - Tech travel-in defaults to Sunday.
-- Engineer travel-in is shifted to Monday for RPC-C / RPC-DF scenarios.
+- Engineer travel-in is shifted to Monday when any RPC model is present.
 
 ---
 
