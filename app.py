@@ -1708,7 +1708,7 @@ class MainWindow(QMainWindow):
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
-            .spacer-one-line {{ height: 24px; }}
+            .spacer-one-line {{ height: 24px; line-height: 24px; font-size: 1px; }}
             .new-page {{ page-break-before: always; }}
             h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
@@ -1738,7 +1738,7 @@ class MainWindow(QMainWindow):
 
             {workload_calendar_html}
 
-            <div class="spacer-one-line"></div>
+            <div class="spacer-one-line">&nbsp;</div>
             <h3>Labor Costs</h3>
             <table class="grid">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
