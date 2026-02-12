@@ -1669,14 +1669,26 @@ class MainWindow(QMainWindow):
             li = "".join([f"<li>{x}</li>" for x in self.data.requirements])
             req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
 
+        header_html = f"""
+            <table width="100%" class="topbar" role="presentation">
+                <tr>
+                    <td align="left" valign="top">
+                        <p class="title">Commissioning Budget Quote</p>
+                        <p class="subtitle muted">Service Estimate</p>
+                    </td>
+                    <td align="right" valign="top">
+                        {logo_html}
+                    </td>
+                </tr>
+            </table>
+        """
+
         html = f"""<html><head><meta charset="utf-8" />
         <style>
-            @page {{ size: Letter; margin: 0.6in; }}
+            @page {{ size: Letter; margin: 0.5in; }}
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ width: 100%; border-collapse: collapse; border-bottom: 3px solid #F05A28; margin-top: 0.05in; margin-bottom: 14px; }}
-            .topbar td {{ padding: 0 0 8px 0; vertical-align: top; }}
-            .topbar-title {{ width: auto; }}
-            .topbar-logo {{ width: 220px; text-align: right; }}
+            .topbar {{ width: 100%; border-collapse: collapse; border-bottom: 3px solid #F05A28; margin: 0 0 12px 0; }}
+            .topbar td {{ padding: 0 0 8px 0; }}
             .quote-logo {{ height: 36px; width: auto; display: inline-block; margin: 0; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
@@ -1697,15 +1709,7 @@ class MainWindow(QMainWindow):
             .muted {{ color: #6D6E71; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
-            <table class="topbar" role="presentation">
-                <tr>
-                    <td class="topbar-title">
-                        <p class="title">Commissioning Budget Quote</p>
-                        <p class="subtitle muted">Service Estimate</p>
-                    </td>
-                    <td class="topbar-logo">{logo_html}</td>
-                </tr>
-            </table>
+            {header_html}
 
             <div class="two">
                 <div class="box">
@@ -1740,6 +1744,7 @@ class MainWindow(QMainWindow):
             </table>
 
             <div class="new-page"></div>
+            {header_html}
             <h3>Estimated Expenses</h3>
             <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
             <table class="grid">
