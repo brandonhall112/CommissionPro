@@ -111,6 +111,41 @@ RPC rule:
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
 
+Training is model-scoped and can be excluded by unchecking **Training Required**.
+
+## 2) Install-window enforcement
+The app validates that per-person allocations do not exceed the customer install window.
+If a model’s required install + training cannot fit the selected window, the app blocks calculation and shows a clear error.
+
+## Workload calendar behavior (left column)
+
+The quote’s shaded top summary area is two columns:
+
+- Left: Customer Name, Reference, Submitted to
+- Right: Prepared By, Quote Validity, Total Personnel, Estimated Duration
+
+Quote Validity, Total Personnel, and Estimated Duration are auto-populated from calculations; the remaining fields come from the **Header** form.
+Header form values are stored in-app for the session and used each time a quote is generated.
+
+The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
+
+- Rows = personnel (T1, T2, … / E1, E2, …)
+- Columns = day slots
+- Light bar = travel day
+- Solid bar = onsite day
+- Printed quote includes the same legend directly below the calendar table.
+
+Colors:
+
+- Technician: `#e04426`
+- Engineer: `#6790a0`
+
+RPC rule:
+
+- Tech travel-in defaults to Sunday.
+- Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+        main
+
 ---
 
 ## Labor cost model
@@ -194,11 +229,16 @@ Confirm `assets/Tech days and quote rates.xlsx` exists in packaged assets.
 ### Help button shows fallback text
 `README.md` was not found in the runtime location. Include it beside the executable (or packaged internal location) if you want full in-app guide text.
 
----
+```bash
+python -m py_compile app.py
+```
 
 ## Git safety guard (internal)
 
 Install repository hooks once:
+### Help button shows fallback text
+`README.md` was not found in the runtime location. Include it beside the executable (or packaged internal location) if you want full in-app guide text.
+        main
 
 ```bash
 ./scripts/install-git-hooks.sh
