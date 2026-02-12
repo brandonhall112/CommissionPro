@@ -44,11 +44,16 @@ Optional skills matrix workbook:
 
 ## Buttons and top-row controls
 
+- **Header**: opens a quote-header form for `Customer Name`, `Reference`, `Submitted to`, and `Prepared By` fields used in the shaded top quote summary area.
 - **Load Excel…**: load a different `.xlsx` workbook for the session.
 - **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
 - **Help**: opens this README inside the app so users can review logic/assumptions directly.
 
----
+- **Model**
+- **Quantity**
+- **Training Required** checkbox (when applicable)
+
+Duplicate model selection is prevented across lines; increase quantity on the existing line instead.
 
 ## Core principles of operation
 
@@ -84,6 +89,13 @@ If skills matrix is missing/unreadable, the app falls back to baseline allocatio
 
 ## Workload calendar behavior (left column)
 
+The quote’s shaded top summary area is two columns:
+
+- Left: Customer Name, Reference, Submitted to
+- Right: Prepared By, Quote Validity, Total Personnel, Estimated Duration
+
+Quote Validity, Total Personnel, and Estimated Duration are auto-populated from calculations; the remaining fields come from the **Header** form.
+
 The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
 
 - Rows = personnel (T1, T2, … / E1, E2, …)
@@ -100,11 +112,9 @@ Colors:
 RPC rule:
 
 - Tech travel-in defaults to Sunday.
-<<<<<<< codex/connect-to-repository-eb9fvy
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
-=======
-- Engineer travel-in is shifted to Monday when any RPC model is present.
->>>>>>> main
+- Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+main
 
 ---
 

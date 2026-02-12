@@ -71,7 +71,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
-    QTextBrowser, QDialog
+    QTextBrowser, QDialog, QLineEdit, QTextEdit
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
@@ -569,6 +569,16 @@ class MainWindow(QMainWindow):
         self.models_sorted = sorted(self.data.models.keys())
         self.training_app_map = {k: bool(v.training_applicable) for k, v in self.data.models.items()}
         self.lines: List[MachineLine] = []
+        self.quote_header_fields = {
+            "customer_name": "",
+            "reference": "",
+            "submitted_to": "",
+            "prepared_by": "",
+        }
+
+        self.skills_matrix: SkillsMatrix | None = None
+        self.skills_warning = ""
+        self._load_skills_matrix()
 
         self.skills_matrix: SkillsMatrix | None = None
         self.skills_warning = ""
@@ -596,6 +606,11 @@ class MainWindow(QMainWindow):
         self.lbl_title.setObjectName("appTitle")
         h.addWidget(self.lbl_title)
         h.addStretch(1)
+        btn_header = QPushButton("Header")
+        btn_header.setToolTip("Enter quote header details (customer/reference/submitted to/prepared by).")
+        btn_header.clicked.connect(self.open_header_form)
+        h.addWidget(btn_header)
+
         btn_load = QPushButton("Load Excel…")
         btn_load.setToolTip("Load a different Excel workbook (will replace the bundled rates/models for this session).")
         btn_load.clicked.connect(self.open_excel)
@@ -1088,6 +1103,54 @@ class MainWindow(QMainWindow):
                 continue
         return None
 
+    def open_header_form(self):
+        """Collect quote-header details used in printable quote output."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Quote Header")
+        dlg.resize(620, 480)
+        lay = QVBoxLayout(dlg)
+
+        lay.addWidget(QLabel("Customer Name"))
+        customer_in = QLineEdit(dlg)
+        customer_in.setPlaceholderText("Customer Name")
+        customer_in.setText(str(self.quote_header_fields.get("customer_name", "")))
+        lay.addWidget(customer_in)
+
+        lay.addWidget(QLabel("Reference"))
+        ref_in = QLineEdit(dlg)
+        ref_in.setPlaceholderText("Reference / PO / Project #")
+        ref_in.setText(str(self.quote_header_fields.get("reference", "")))
+        lay.addWidget(ref_in)
+
+        lay.addWidget(QLabel("Submitted to (name, email, phone)"))
+        submitted_in = QTextEdit(dlg)
+        submitted_in.setPlaceholderText("Name\nEmail\nPhone")
+        submitted_in.setMinimumHeight(120)
+        submitted_in.setPlainText(str(self.quote_header_fields.get("submitted_to", "")))
+        lay.addWidget(submitted_in)
+
+        lay.addWidget(QLabel("Prepared By"))
+        prepared_in = QLineEdit(dlg)
+        prepared_in.setPlaceholderText("Prepared by")
+        prepared_in.setText(str(self.quote_header_fields.get("prepared_by", "")))
+        lay.addWidget(prepared_in)
+
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        btn_cancel = QPushButton("Cancel", dlg)
+        btn_save = QPushButton("Save", dlg)
+        btn_cancel.clicked.connect(dlg.reject)
+        btn_save.clicked.connect(dlg.accept)
+        actions.addWidget(btn_cancel)
+        actions.addWidget(btn_save)
+        lay.addLayout(actions)
+
+        if dlg.exec() == QDialog.Accepted:
+            self.quote_header_fields["customer_name"] = customer_in.text().strip()
+            self.quote_header_fields["reference"] = ref_in.text().strip()
+            self.quote_header_fields["submitted_to"] = submitted_in.toPlainText().strip()
+            self.quote_header_fields["prepared_by"] = prepared_in.text().strip()
+
     def open_help(self):
         """Display README guidance in an in-app help dialog."""
         try:
@@ -1126,7 +1189,6 @@ class MainWindow(QMainWindow):
         if not selections:
             raise ValueError("No machines selected. Click “Add Machine” to begin.")
 
-<<<<<<< codex/connect-to-repository-eb9fvy
         selected_models = {s.model for s in selections}
         if any(m in RPC_ENGINEER_TUESDAY_MODELS for m in selected_models):
             eng_travel_in_day = 3  # Tuesday
@@ -1134,9 +1196,7 @@ class MainWindow(QMainWindow):
             eng_travel_in_day = 2  # Monday
         else:
             eng_travel_in_day = 1  # Sunday
-=======
-        rpc_engineer_late_depart = any(s.model in RPC_MODELS for s in selections)
->>>>>>> main
+        main
 
         window = int(self.spin_window.value())
 
@@ -1331,11 +1391,9 @@ class MainWindow(QMainWindow):
             return weekend_days
 
         tech_weekend_days = _weekend_onsite_days(tech_all, travel_in_day=1)
-<<<<<<< codex/connect-to-repository-eb9fvy
         eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=eng_travel_in_day)
-=======
-        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=(2 if rpc_engineer_late_depart else 1))
->>>>>>> main
+        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=eng_travel_in_day)
+        main
 
         tech_regular_days = max(0, int(sum(tech_all)) - tech_weekend_days)
         eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
@@ -1394,11 +1452,9 @@ class MainWindow(QMainWindow):
             "exp_total": exp_total,
             "grand_total": grand_total,
             "skills_warning": self.skills_warning,
-<<<<<<< codex/connect-to-repository-eb9fvy
             "eng_travel_in_day": eng_travel_in_day,
-=======
-            "rpc_engineer_late_depart": rpc_engineer_late_depart,
->>>>>>> main
+            "eng_travel_in_day": eng_travel_in_day,
+        main
             "tech_regular_days": tech_regular_days,
             "eng_regular_days": eng_regular_days,
             "tech_ot_hours": tech_ot_hours,
@@ -1456,15 +1512,13 @@ class MainWindow(QMainWindow):
 
         # Default assumptions:
         # - Tech travel-in: Sunday (day 1), first onsite Monday (day 2)
-<<<<<<< codex/connect-to-repository-eb9fvy
         # - Engineer travel-in depends on RPC mix (Sun/Monday/Tuesday rules)
         tech_travel_in = 1
         eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
-=======
-        # - Engineer same, except RPC jobs depart one day later (Monday/day 2)
+        # - Engineer travel-in depends on RPC mix (Sun/Monday/Tuesday rules)
         tech_travel_in = 1
-        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
->>>>>>> main
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        main
 
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
@@ -1646,6 +1700,21 @@ class MainWindow(QMainWindow):
             except Exception:
                 logo_html = ""
 
+        hdr_customer = str(self.quote_header_fields.get("customer_name", "")).strip()
+        hdr_reference = str(self.quote_header_fields.get("reference", "")).strip()
+        hdr_submitted = str(self.quote_header_fields.get("submitted_to", "")).strip()
+        hdr_prepared = str(self.quote_header_fields.get("prepared_by", "")).strip()
+
+        def _esc(x: str) -> str:
+            return (
+                x.replace("&", "&amp;")
+                 .replace("<", "&lt;")
+                 .replace(">", "&gt;")
+                 .replace('"', "&quot;")
+            )
+
+        submitted_html = _esc(hdr_submitted).replace("\n", "<br/>") if hdr_submitted else ""
+
         mr = []
         for r in meta["machine_rows"]:
             if not r.get("training_applicable", True):
@@ -1687,11 +1756,9 @@ class MainWindow(QMainWindow):
 
         # Build printable workload calendar (same 14-day Gantt concept used in the UI).
         tech_travel_in = 1
-<<<<<<< codex/connect-to-repository-eb9fvy
         eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
-=======
-        eng_travel_in = 2 if bool(meta.get("rpc_engineer_late_depart", False)) else 1
->>>>>>> main
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        main
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
             people.append((f"T{i}", int(d), tech_travel_in, "#e04426"))
@@ -1793,12 +1860,15 @@ class MainWindow(QMainWindow):
 
             <div class="two">
                 <div class="box">
-                    <b>DATE</b><br/>{date_str}<br/><br/>
-                    <b>TOTAL PERSONNEL</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)
+                    <b>Customer Name:</b><br/>{_esc(hdr_customer)}<br/><br/>
+                    <b>Reference:</b><br/>{_esc(hdr_reference)}<br/><br/>
+                    <b>Submitted to:</b><br/>{submitted_html}
                 </div>
                 <div class="box">
-                    <b>QUOTE VALIDITY</b><br/>{valid_str}<br/><br/>
-                    <b>ESTIMATED DURATION</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
+                    <b>Prepared By:</b><br/>{_esc(hdr_prepared)}<br/><br/>
+                    <b>Quote Validity:</b><br/>{valid_str}<br/><br/>
+                    <b>Total Personnel:</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)<br/><br/>
+                    <b>Estimated Duration:</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
                 </div>
             </div>
             <div class="section-spacer"></div>
