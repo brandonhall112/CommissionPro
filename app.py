@@ -1571,7 +1571,7 @@ class MainWindow(QMainWindow):
             try:
                 b = LOGO_PATH.read_bytes()
                 b64 = base64.b64encode(b).decode("ascii")
-                logo_html = f'<img src="data:image/png;base64,{b64}" height="36" style="height:36px;" />'
+                logo_html = f'<img class="quote-logo" src="data:image/png;base64,{b64}" alt="Pearson" />'
             except Exception:
                 logo_html = ""
 
@@ -1673,9 +1673,11 @@ class MainWindow(QMainWindow):
         <style>
             @page {{ size: Letter; margin: 0.6in; }}
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .topbar {{ display: table; width: 100%; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-top: 0.05in; margin-bottom: 14px; }}
-            .topbar-left {{ display: table-cell; vertical-align: top; }}
-            .topbar-right {{ display: table-cell; width: 220px; text-align: right; vertical-align: top; }}
+            .topbar {{ width: 100%; border-collapse: collapse; border-bottom: 3px solid #F05A28; margin-top: 0.05in; margin-bottom: 14px; }}
+            .topbar td {{ padding: 0 0 8px 0; vertical-align: top; }}
+            .topbar-title {{ width: auto; }}
+            .topbar-logo {{ width: 220px; text-align: right; }}
+            .quote-logo {{ height: 36px; width: auto; display: inline-block; margin: 0; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
@@ -1695,14 +1697,15 @@ class MainWindow(QMainWindow):
             .muted {{ color: #6D6E71; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
-            <div class="page-logo">{logo_html}</div>
-            <div class="topbar">
-                <div class="topbar-left">
-                    <p class="title">Commissioning Budget Quote</p>
-                    <p class="subtitle muted">Service Estimate</p>
-                </div>
-                <div class="topbar-right">{logo_html}</div>
-            </div>
+            <table class="topbar" role="presentation">
+                <tr>
+                    <td class="topbar-title">
+                        <p class="title">Commissioning Budget Quote</p>
+                        <p class="subtitle muted">Service Estimate</p>
+                    </td>
+                    <td class="topbar-logo">{logo_html}</td>
+                </tr>
+            </table>
 
             <div class="two">
                 <div class="box">
