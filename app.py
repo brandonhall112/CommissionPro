@@ -75,7 +75,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QColor, QPainter, QImage
+from PySide6.QtGui import QPageSize, QFont, QColor
 import base64
 
 APP_TITLE = "Pearson Commissioning Pro"
@@ -1672,15 +1672,15 @@ class MainWindow(QMainWindow):
             req_html = f"<h3>Requirements & Assumptions</h3><ul>{li}</ul>"
 
         header_html = f"""
-            <table width="100%" role="presentation" style="border-collapse:collapse; margin:0 0 4px 0;">
+            <table width="100%" role="presentation" style="border-collapse:collapse; margin:0 0 2px 0;">
                 <tr>
                     <td></td>
-                    <td align="right" valign="top" style="width:220px;"></td>
+                    <td align="right" valign="top" style="width:220px;">{logo_html}</td>
                 </tr>
             </table>
             <table width="100%" class="topbar" role="presentation">
                 <tr>
-                    <td align="left" valign="top">
+                    <td align="left" valign="top" style="padding-top:8px;">
                         <p class="title">Commissioning Budget Quote</p>
                         <p class="subtitle muted">Service Estimate</p>
                     </td>
@@ -1801,48 +1801,7 @@ class MainWindow(QMainWindow):
             preview.setWindowModality(Qt.ApplicationModal)
             preview.resize(1100, 800)
 
-            def _paint_with_header_logo(p: QPrinter):
-                render_doc = QTextDocument()
-                render_doc.setHtml(html)
-
-                # Layout in point units (1/72") and scale painter accordingly so
-                # the document is rendered at normal size in preview/print.
-                page_rect = p.pageRect(QPrinter.Point)
-                render_doc.setPageSize(page_rect.size())
-                page_h = float(page_rect.height())
-                page_w = float(page_rect.width())
-                page_count = max(1, int(render_doc.pageCount()))
-
-                logo_img = QImage(str(LOGO_PATH)) if LOGO_PATH.exists() else QImage()
-
-                painter = QPainter(p)
-                try:
-                    scale = float(p.logicalDpiX()) / 72.0 if p.logicalDpiX() else 1.0
-                    for page in range(page_count):
-                        if page > 0:
-                            p.newPage()
-
-                        painter.save()
-                        painter.scale(scale, scale)
-
-                        # Draw current page slice of the document content.
-                        source_rect = QRectF(0.0, page * page_h, page_w, page_h)
-                        render_doc.drawContents(painter, source_rect)
-
-                        # Draw logo in a true page header position (~0.5in from top/right).
-                        if not logo_img.isNull():
-                            margin_px = 36.0  # 0.5in in point units
-                            logo_h = 24.0
-                            logo_w = int((logo_img.width() / max(1, logo_img.height())) * logo_h)
-                            x = page_w - margin_px - float(logo_w)
-                            y = margin_px
-                            painter.drawImage(QRectF(x, y, float(logo_w), logo_h), logo_img)
-
-                        painter.restore()
-                finally:
-                    painter.end()
-
-            preview.paintRequested.connect(_paint_with_header_logo)
+            preview.paintRequested.connect(lambda p: doc.print_(p))
 
             # Show the dialog reliably
             preview.exec()
