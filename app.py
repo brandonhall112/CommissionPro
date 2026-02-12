@@ -1625,6 +1625,19 @@ class MainWindow(QMainWindow):
 
         day_labels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
         cal_head = "".join([f"<th>{day_labels[i % 7]}</th>" for i in range(WORKLOAD_CALENDAR_DAYS)])
+
+        def _lighten_hex(color_hex: str, amt: float = 0.58) -> str:
+            color_hex = color_hex.strip().lstrip("#")
+            if len(color_hex) != 6:
+                return "#d7dce2"
+            r = int(color_hex[0:2], 16)
+            g = int(color_hex[2:4], 16)
+            b = int(color_hex[4:6], 16)
+            r = int(r + (255 - r) * amt)
+            g = int(g + (255 - g) * amt)
+            b = int(b + (255 - b) * amt)
+            return f"#{r:02x}{g:02x}{b:02x}"
+
         cal_rows = []
         for label, onsite_days, travel_in_day, base_color in people:
             cells = ["<td></td>" for _ in range(WORKLOAD_CALENDAR_DAYS)]
@@ -1632,9 +1645,10 @@ class MainWindow(QMainWindow):
                 onsite_start = travel_in_day + 1
                 onsite_end = onsite_start + onsite_days - 1
                 travel_out = onsite_end + 1
+                travel_color = _lighten_hex(base_color)
                 for day in (travel_in_day, travel_out):
                     if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
-                        cells[day - 1] = f'<td class="cal-travel" style="background:{base_color};"></td>'
+                        cells[day - 1] = f'<td class="cal-travel" style="background:{travel_color};"></td>'
                 for day in range(onsite_start, onsite_end + 1):
                     if 1 <= day <= WORKLOAD_CALENDAR_DAYS:
                         cells[day - 1] = f'<td class="cal-onsite" style="background:{base_color};"></td>'
@@ -1659,8 +1673,9 @@ class MainWindow(QMainWindow):
         <style>
             @page {{ size: Letter; margin: 0.6in; }}
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
-            .page-logo {{ position: fixed; top: 0.2in; right: 0.05in; z-index: 2; }}
-            .topbar {{ display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-top: 0.05in; margin-bottom: 14px; }}
+            .topbar {{ display: table; width: 100%; border-bottom: 3px solid #F05A28; padding-bottom: 10px; margin-top: 0.05in; margin-bottom: 14px; }}
+            .topbar-left {{ display: table-cell; vertical-align: top; }}
+            .topbar-right {{ display: table-cell; width: 220px; text-align: right; vertical-align: top; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
@@ -1668,11 +1683,13 @@ class MainWindow(QMainWindow):
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid-calendar th, .grid-calendar td {{ padding: 4px; text-align: center; }}
             .grid-calendar th.cal-person {{ width: 60px; text-align: left; }}
-            .grid-calendar td.cal-travel {{ opacity: 0.45; }}
-            .grid-calendar td.cal-onsite {{ opacity: 1.0; }}
+            .grid-calendar td.cal-travel {{ }}
+            .grid-calendar td.cal-onsite {{ }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
             .two {{ display: table; width: 100%; }}
             .two > div {{ display: table-cell; width: 50%; vertical-align: top; padding-right: 10px; }}
+            .spacer-one-line {{ height: 12px; }}
+            .new-page {{ page-break-before: always; }}
             h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
             .muted {{ color: #6D6E71; }}
@@ -1680,10 +1697,11 @@ class MainWindow(QMainWindow):
         </style></head><body>
             <div class="page-logo">{logo_html}</div>
             <div class="topbar">
-                <div>
+                <div class="topbar-left">
                     <p class="title">Commissioning Budget Quote</p>
                     <p class="subtitle muted">Service Estimate</p>
                 </div>
+                <div class="topbar-right">{logo_html}</div>
             </div>
 
             <div class="two">
@@ -1707,6 +1725,7 @@ class MainWindow(QMainWindow):
 
             {workload_calendar_html}
 
+            <div class="spacer-one-line"></div>
             <h3>Labor Costs</h3>
             <table class="grid">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
@@ -1717,6 +1736,7 @@ class MainWindow(QMainWindow):
                 <tr><td><b>Labor Subtotal</b></td><td class="right"><b>{money(labor_sub)}</b></td></tr>
             </table>
 
+            <div class="new-page"></div>
             <h3>Estimated Expenses</h3>
             <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
             <table class="grid">

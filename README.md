@@ -199,3 +199,11 @@ This blocks accidental non-`main` commits unless explicitly bypassed.
 
 Publisher: Brandon T. Hall  
 Tool: Pearson Commissioning Pro
+
+---
+
+## Recent quote-form updates
+
+- Generated quote now includes a right-aligned Pearson logo pinned at page top so it repeats on subsequent printed pages.
+- Generated quote now includes the workload calendar directly after Machine Breakdown.
+- Overtime lines are presented as day-based rates/quantities to match the labor table semantics.
