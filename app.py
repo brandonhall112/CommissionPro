@@ -75,7 +75,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
 from PySide6.QtGui import QTextDocument
-from PySide6.QtGui import QPageSize, QFont, QColor, QPainter, QImage, QAbstractTextDocumentLayout
+from PySide6.QtGui import QPageSize, QFont, QColor, QPainter, QImage
 import base64
 
 APP_TITLE = "Pearson Commissioning Pro"
@@ -1805,7 +1805,8 @@ class MainWindow(QMainWindow):
                 render_doc = QTextDocument()
                 render_doc.setHtml(html)
 
-                page_rect = p.pageRect(QPrinter.DevicePixel)
+                # Use point units (1/72") so Qt text layout remains normal-sized.
+                page_rect = p.pageRect(QPrinter.Point)
                 render_doc.setPageSize(page_rect.size())
                 page_h = float(page_rect.height())
                 page_w = float(page_rect.width())
@@ -1819,22 +1820,18 @@ class MainWindow(QMainWindow):
                         if page > 0:
                             p.newPage()
 
-                        # Draw current page slice of the document content.
-                        painter.save()
-                        painter.translate(float(page_rect.left()), float(page_rect.top()) - (page * page_h))
-                        ctx = QAbstractTextDocumentLayout.PaintContext()
-                        ctx.clip = QRectF(0.0, page * page_h, page_w, page_h)
-                        render_doc.documentLayout().draw(painter, ctx)
-                        painter.restore()
-
                         # Draw logo in a true page header position (~0.5in from top/right).
                         if not logo_img.isNull():
-                            margin_px = int(0.5 * p.resolution())
-                            logo_h = max(20, int(0.25 * p.resolution()))
+                            margin_px = 36  # 0.5in in point units
+                            logo_h = 18
                             logo_w = int((logo_img.width() / max(1, logo_img.height())) * logo_h)
                             x = int(page_rect.left() + page_w - margin_px - logo_w)
                             y = int(margin_px)
                             painter.drawImage(QRectF(float(x), float(y), float(logo_w), float(logo_h)), logo_img)
+
+                        # Draw current page slice of the document content.
+                        source_rect = QRectF(0.0, page * page_h, page_w, page_h)
+                        render_doc.drawContents(painter, source_rect)
                 finally:
                     painter.end()
 
