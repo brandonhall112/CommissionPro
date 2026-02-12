@@ -1573,7 +1573,7 @@ class MainWindow(QMainWindow):
                 b64 = base64.b64encode(b).decode("ascii")
                 # Keep logo intentionally small for print layout; explicit attributes are
                 # more reliable than class-only sizing in Qt rich-text rendering.
-                logo_html = f'<img src="data:image/png;base64,{b64}" alt="Pearson" height="9" style="height:9px; width:auto; display:inline-block;" />'
+                logo_html = f'<img src="data:image/png;base64,{b64}" alt="Pearson" height="9" style="height:12px; width:auto; display:inline-block;" />'
             except Exception:
                 logo_html = ""
 
@@ -1691,7 +1691,7 @@ class MainWindow(QMainWindow):
             body {{ font-family: Arial, Helvetica, sans-serif; font-size: 10pt; color: #0F172A; }}
             .topbar {{ width: 100%; border-collapse: collapse; border-bottom: 3px solid #F05A28; margin: 0 0 12px 0; }}
             .topbar td {{ padding: 0 0 8px 0; }}
-            .quote-logo {{ height: 9px; width: auto; display: inline-block; margin: 0; }}
+            .quote-logo {{ height: 12px; width: auto; display: inline-block; margin: 0; }}
             .title {{ font-size: 18pt; font-weight: 800; color: #4c4b4c; margin: 0; }}
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
