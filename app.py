@@ -483,6 +483,7 @@ class MachineLine(QFrame):
         )
 
 
+
 class Card(QFrame):
     def __init__(self, title: str, icon_text: str):
         super().__init__()
@@ -1436,6 +1437,7 @@ class MainWindow(QMainWindow):
                     item.setBackground(base_color)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
@@ -1693,6 +1695,7 @@ class MainWindow(QMainWindow):
             .muted {{ color: #6D6E71; }}
             .total {{ font-size: 16pt; font-weight: 900; color: #4c4b4c; }}
         </style></head><body>
+            <div class="page-logo">{logo_html}</div>
             <div class="topbar">
                 <div class="topbar-left">
                     <p class="title">Commissioning Budget Quote</p>
