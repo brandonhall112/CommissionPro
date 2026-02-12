@@ -1805,7 +1805,8 @@ class MainWindow(QMainWindow):
                 render_doc = QTextDocument()
                 render_doc.setHtml(html)
 
-                # Use point units (1/72") so Qt text layout remains normal-sized.
+                # Layout in point units (1/72") and scale painter accordingly so
+                # the document is rendered at normal size in preview/print.
                 page_rect = p.pageRect(QPrinter.Point)
                 render_doc.setPageSize(page_rect.size())
                 page_h = float(page_rect.height())
@@ -1816,22 +1817,28 @@ class MainWindow(QMainWindow):
 
                 painter = QPainter(p)
                 try:
+                    scale = float(p.logicalDpiX()) / 72.0 if p.logicalDpiX() else 1.0
                     for page in range(page_count):
                         if page > 0:
                             p.newPage()
 
-                        # Draw logo in a true page header position (~0.5in from top/right).
-                        if not logo_img.isNull():
-                            margin_px = 36  # 0.5in in point units
-                            logo_h = 18
-                            logo_w = int((logo_img.width() / max(1, logo_img.height())) * logo_h)
-                            x = int(page_rect.left() + page_w - margin_px - logo_w)
-                            y = int(margin_px)
-                            painter.drawImage(QRectF(float(x), float(y), float(logo_w), float(logo_h)), logo_img)
+                        painter.save()
+                        painter.scale(scale, scale)
 
                         # Draw current page slice of the document content.
                         source_rect = QRectF(0.0, page * page_h, page_w, page_h)
                         render_doc.drawContents(painter, source_rect)
+
+                        # Draw logo in a true page header position (~0.5in from top/right).
+                        if not logo_img.isNull():
+                            margin_px = 36.0  # 0.5in in point units
+                            logo_h = 24.0
+                            logo_w = int((logo_img.width() / max(1, logo_img.height())) * logo_h)
+                            x = page_w - margin_px - float(logo_w)
+                            y = margin_px
+                            painter.drawImage(QRectF(x, y, float(logo_w), logo_h), logo_img)
+
+                        painter.restore()
                 finally:
                     painter.end()
 
