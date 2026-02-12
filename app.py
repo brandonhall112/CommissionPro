@@ -65,7 +65,7 @@ def resolve_assets_dir() -> Path:
 import numpy as np
 import openpyxl
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QRectF
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
@@ -484,6 +484,7 @@ class MachineLine(QFrame):
         )
 
 
+
 class Card(QFrame):
     def __init__(self, title: str, icon_text: str):
         super().__init__()
@@ -574,6 +575,10 @@ class MainWindow(QMainWindow):
             "submitted_to": "",
             "prepared_by": "",
         }
+
+        self.skills_matrix: SkillsMatrix | None = None
+        self.skills_warning = ""
+        self._load_skills_matrix()
 
         self.skills_matrix: SkillsMatrix | None = None
         self.skills_warning = ""
@@ -1191,6 +1196,7 @@ class MainWindow(QMainWindow):
             eng_travel_in_day = 2  # Monday
         else:
             eng_travel_in_day = 1  # Sunday
+        main
 
         window = int(self.spin_window.value())
 
@@ -1386,6 +1392,8 @@ class MainWindow(QMainWindow):
 
         tech_weekend_days = _weekend_onsite_days(tech_all, travel_in_day=1)
         eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=eng_travel_in_day)
+        eng_weekend_days = _weekend_onsite_days(eng_all, travel_in_day=eng_travel_in_day)
+        main
 
         tech_regular_days = max(0, int(sum(tech_all)) - tech_weekend_days)
         eng_regular_days = max(0, int(sum(eng_all)) - eng_weekend_days)
@@ -1445,6 +1453,8 @@ class MainWindow(QMainWindow):
             "grand_total": grand_total,
             "skills_warning": self.skills_warning,
             "eng_travel_in_day": eng_travel_in_day,
+            "eng_travel_in_day": eng_travel_in_day,
+        main
             "tech_regular_days": tech_regular_days,
             "eng_regular_days": eng_regular_days,
             "tech_ot_hours": tech_ot_hours,
@@ -1505,6 +1515,10 @@ class MainWindow(QMainWindow):
         # - Engineer travel-in depends on RPC mix (Sun/Monday/Tuesday rules)
         tech_travel_in = 1
         eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        # - Engineer travel-in depends on RPC mix (Sun/Monday/Tuesday rules)
+        tech_travel_in = 1
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        main
 
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
@@ -1546,6 +1560,7 @@ class MainWindow(QMainWindow):
                     item.setBackground(base_color)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
@@ -1742,6 +1757,8 @@ class MainWindow(QMainWindow):
         # Build printable workload calendar (same 14-day Gantt concept used in the UI).
         tech_travel_in = 1
         eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        eng_travel_in = int(meta.get("eng_travel_in_day", 1) or 1)
+        main
         people = []
         for i, d in enumerate(tech.onsite_days_by_person, start=1):
             people.append((f"T{i}", int(d), tech_travel_in, "#e04426"))

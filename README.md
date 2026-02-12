@@ -49,7 +49,11 @@ Optional skills matrix workbook:
 - **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
 - **Help**: opens this README inside the app so users can review logic/assumptions directly.
 
----
+- **Model**
+- **Quantity**
+- **Training Required** checkbox (when applicable)
+
+Duplicate model selection is prevented across lines; increase quantity on the existing line instead.
 
 ## Core principles of operation
 
@@ -109,6 +113,8 @@ RPC rule:
 
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+- Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+main
 
 ---
 
