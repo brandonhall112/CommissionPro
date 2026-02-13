@@ -111,7 +111,7 @@ RPC rule:
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
 
----
+Training is model-scoped and can be excluded by unchecking **Training Required**.
 
 ## Labor cost model
 
@@ -136,7 +136,7 @@ If OT keys are missing, OT falls back to regular role rates.
 Overtime applies when onsite days land on Saturday or Sunday.
 The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
----
+Colors:
 
 ## Expense model
 
