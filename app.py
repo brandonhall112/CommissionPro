@@ -1826,6 +1826,7 @@ class MainWindow(QMainWindow):
             .subtitle {{ margin: 4px 0 0 0; color: #6D6E71; }}
             .grid {{ width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }}
             .grid th {{ background: #343551; color: white; text-align: left; padding: 8px; border-bottom: 1px solid #E2E8F0; }}
+            .grid th.right, .grid td.right {{ text-align: right; }}
             .grid td {{ padding: 8px; border-bottom: 1px solid #E2E8F0; }}
             .grid-calendar th, .grid-calendar td {{ padding: 4px; text-align: center; }}
             .grid-calendar th.cal-person {{ width: 60px; text-align: left; }}
