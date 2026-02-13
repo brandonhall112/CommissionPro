@@ -81,7 +81,9 @@ Rules include:
 If skills matrix is missing/unreadable, the app falls back to baseline allocation and shows a non-fatal warning.
 - RPC staffing is isolated from non-RPC staffing (no cross-pollination across pools).
 
----
+- RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are always grouped together in a dedicated RPC pool
+- generic/support lines treated as non-blocking
+- matrix-missing models treated as supplemental and distributed safely
 
 ## Workload calendar behavior (left column)
 
@@ -111,7 +113,7 @@ RPC rule:
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
 
----
+RPC rule:
 
 ## Labor cost model
 
@@ -136,7 +138,7 @@ If OT keys are missing, OT falls back to regular role rates.
 Overtime applies when onsite days land on Saturday or Sunday.
 The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
----
+If OT keys are missing, OT falls back to regular role rates.
 
 ## Expense model
 
@@ -153,7 +155,16 @@ Estimated expenses are calculated from person-days/trip-days and workbook rates:
 
 Travel day assumptions (in addition to onsite days) are applied consistently to expense calculations.
 
----
+Estimated expenses are calculated from person-days/trip-days and workbook rates:
+
+- Airfare
+- Baggage
+- Car rental
+- Parking
+- Hotel nights
+- Per diem
+- Pre/Post trip prep
+- Travel time
 
 ## Quote preview / print
 
