@@ -49,7 +49,9 @@ Optional skills matrix workbook:
 - **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
 - **Help**: opens this README inside the app so users can review logic/assumptions directly.
 
----
+- **Model**
+- **Quantity**
+- **Training Required** checkbox (when applicable)
 
 ## Core principles of operation
 
@@ -111,7 +113,11 @@ RPC rule:
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
 
-Training is model-scoped and can be excluded by unchecking **Training Required**.
+- Rows = personnel (T1, T2, … / E1, E2, …)
+- Columns = day slots
+- Light bar = travel day
+- Solid bar = onsite day
+- Printed quote includes the same legend directly below the calendar table.
 
 ## Labor cost model
 
@@ -136,9 +142,10 @@ If OT keys are missing, OT falls back to regular role rates.
 Overtime applies when onsite days land on Saturday or Sunday.
 The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
-Colors:
-
-## Expense model
+- Tech Regular Time (daily rate)
+- Tech Overtime (Sat/Sun, daily-equivalent rate)
+- Eng Regular Time (daily rate)
+- Eng Overtime (Sat/Sun, daily-equivalent rate)
 
 ## Expense model
 
@@ -155,7 +162,9 @@ Estimated expenses are calculated from person-days/trip-days and workbook rates:
 
 Travel day assumptions (in addition to onsite days) are applied consistently to expense calculations.
 
----
+### OT triggering
+Overtime applies when onsite days land on Saturday or Sunday.
+The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
 ## Quote preview / print
 

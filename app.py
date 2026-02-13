@@ -1832,8 +1832,10 @@ class MainWindow(QMainWindow):
             .grid-calendar td.cal-travel {{ }}
             .grid-calendar td.cal-onsite {{ }}
             .box {{ border: 1px solid #E6E8EB; border-radius: 10px; padding: 10px; background: rgba(103,144,160,0.18); }}
-            .summary-wrap {{ width: 100%; border-collapse: collapse; table-layout: fixed; border: 1px solid #E6E8EB; border-radius: 10px; background: rgba(103,144,160,0.18); }}
-            .summary-wrap td {{ vertical-align: top; padding: 10px; }}
+            .summary-band {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+            .summary-band td {{ padding: 0; border: 1px solid #E6E8EB; border-radius: 10px; background: rgba(103,144,160,0.18); }}
+            .summary-wrap {{ width: 100%; border-collapse: collapse; table-layout: fixed; }}
+            .summary-wrap td {{ vertical-align: top; padding: 10px; background: transparent; border: 0; }}
             .summary-wrap td.col-left {{ width: 48%; padding-right: 28px; }}
             .summary-wrap td.col-right {{ width: 52%; padding-left: 28px; }}
             .spacer-one-line {{ height: 12px; line-height: 12px; font-size: 1px; }}
@@ -1845,18 +1847,24 @@ class MainWindow(QMainWindow):
         </style></head><body>
             {header_html}
 
-            <table class="summary-wrap" role="presentation">
+            <table class="summary-band" role="presentation" width="100%">
                 <tr>
-                    <td class="col-left">
-                        <b>Customer Name:</b><br/>{_esc(hdr_customer)}<br/><br/>
-                        <b>Reference:</b><br/>{_esc(hdr_reference)}<br/><br/>
-                        <b>Submitted to:</b><br/>{submitted_html}
-                    </td>
-                    <td class="col-right">
-                        <b>Prepared By:</b><br/>{_esc(hdr_prepared)}<br/><br/>
-                        <b>Quote Validity:</b><br/>{valid_str}<br/><br/>
-                        <b>Total Personnel:</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)<br/><br/>
-                        <b>Estimated Duration:</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
+                    <td>
+                        <table class="summary-wrap" role="presentation" width="100%">
+                            <tr>
+                                <td class="col-left">
+                                    <b>Customer Name:</b><br/>{_esc(hdr_customer)}<br/><br/>
+                                    <b>Reference:</b><br/>{_esc(hdr_reference)}<br/><br/>
+                                    <b>Submitted to:</b><br/>{submitted_html}
+                                </td>
+                                <td class="col-right">
+                                    <b>Prepared By:</b><br/>{_esc(hdr_prepared)}<br/><br/>
+                                    <b>Quote Validity:</b><br/>{valid_str}<br/><br/>
+                                    <b>Total Personnel:</b><br/>{tech.headcount + eng.headcount} ({tech.headcount} Tech, {eng.headcount} Eng)<br/><br/>
+                                    <b>Estimated Duration:</b><br/>{meta["max_onsite"]} days onsite + {TRAVEL_DAYS_PER_PERSON} travel days
+                                </td>
+                            </tr>
+                        </table>
                     </td>
                 </tr>
             </table>
