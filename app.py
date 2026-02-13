@@ -602,7 +602,7 @@ class MainWindow(QMainWindow):
         self.lbl_title.setObjectName("appTitle")
         h.addWidget(self.lbl_title)
         h.addStretch(1)
-        btn_header = QPushButton("Header")
+        btn_header = QPushButton("Customer Details")
         btn_header.setToolTip("Enter quote header details (customer/reference/submitted to/prepared by).")
         btn_header.clicked.connect(self.open_header_form)
         h.addWidget(btn_header)

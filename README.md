@@ -44,7 +44,7 @@ Optional skills matrix workbook:
 
 ## Buttons and top-row controls
 
-- **Header**: opens a quote-header form for `Customer Name`, `Reference`, `Submitted to`, and `Prepared By` fields used in the shaded top quote summary area.
+- **Customer Details**: opens a quote-header form for `Customer Name`, `Reference`, `Submitted to`, and `Prepared By` fields used in the shaded top quote summary area.
 - **Load Excel…**: load a different `.xlsx` workbook for the session.
 - **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
 - **Help**: opens this README inside the app so users can review logic/assumptions directly.
@@ -92,8 +92,8 @@ The quote’s shaded top summary area is two columns:
 - Left: Customer Name, Reference, Submitted to
 - Right: Prepared By, Quote Validity, Total Personnel, Estimated Duration
 
-Quote Validity, Total Personnel, and Estimated Duration are auto-populated from calculations; the remaining fields come from the **Header** form.
-Header form values are stored in-app for the session and used each time a quote is generated.
+Quote Validity, Total Personnel, and Estimated Duration are auto-populated from calculations; the remaining fields come from the **Customer Details** form.
+Customer Details form values are stored in-app for the session and used each time a quote is generated.
 
 The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
 
