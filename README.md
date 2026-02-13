@@ -49,9 +49,7 @@ Optional skills matrix workbook:
 - **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
 - **Help**: opens this README inside the app so users can review logic/assumptions directly.
 
-- **Model**
-- **Quantity**
-- **Training Required** checkbox (when applicable)
+---
 
 ## Core principles of operation
 
@@ -83,7 +81,9 @@ Rules include:
 If skills matrix is missing/unreadable, the app falls back to baseline allocation and shows a non-fatal warning.
 - RPC staffing is isolated from non-RPC staffing (no cross-pollination across pools).
 
----
+## 2) Install-window enforcement
+The app validates that per-person allocations do not exceed the customer install window.
+If a model’s required install + training cannot fit the selected window, the app blocks calculation and shows a clear error.
 
 ## Workload calendar behavior (left column)
 
@@ -166,6 +166,11 @@ Travel day assumptions (in addition to onsite days) are applied consistently to 
 Overtime applies when onsite days land on Saturday or Sunday.
 The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
+- Tech Regular Time (daily rate)
+- Tech Overtime (Sat/Sun, daily-equivalent rate)
+- Eng Regular Time (daily rate)
+- Eng Overtime (Sat/Sun, daily-equivalent rate)
+
 ## Quote preview / print
 
 **Print Quote…** opens a preview window and supports normal print/PDF flows.
@@ -175,7 +180,9 @@ The quote includes:
 - labor breakdown (regular + OT)
 - expenses
 - total estimate
-- assumptions/requirements text from workbook where provided
+- requirements/assumptions text from workbook where provided
+
+The standalone **Terms & Conditions** section has been removed from the quote output.
 
 ---
 
