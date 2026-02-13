@@ -1783,7 +1783,7 @@ class MainWindow(QMainWindow):
 
         workload_calendar_html = f"""
             <h3>Workload Calendar</h3>
-            <table class="grid grid-calendar">
+            <table class="grid grid-calendar" width="100%">
                 <tr><th class="cal-person">Person</th>{cal_head}</tr>
                 {''.join(cal_rows) if cal_rows else f'<tr><td colspan="{WORKLOAD_CALENDAR_DAYS + 1}" class="muted">No personnel assigned.</td></tr>'}
             </table>
@@ -1871,7 +1871,7 @@ class MainWindow(QMainWindow):
             <div class="section-spacer"></div>
 
             <h3>Machine Breakdown</h3>
-            <table class="grid">
+            <table class="grid" width="100%">
                 <tr><th>Model</th><th style="text-align:center;">Qty</th><th>Tech Days</th><th style="text-align:center;">Eng Days</th>
                     <th style="text-align:center;">Technicians</th><th style="text-align:center;">Engineers</th></tr>
                 {''.join(mr)}
@@ -1881,7 +1881,7 @@ class MainWindow(QMainWindow):
 
             <div class="spacer-one-line">&nbsp;</div>
             <h3>Labor Costs</h3>
-            <table class="grid">
+            <table class="grid" width="100%">
                 <tr><th>Item</th><th class="right">Extended</th></tr>
                 <tr><td>Tech. Regular Time ({meta.get("tech_regular_days", tech.total_onsite_days)} days × {money(tech.day_rate)}/day)</td><td class="right">{money(meta.get("tech_regular_days", tech.total_onsite_days) * tech.day_rate)}</td></tr>
                 <tr><td>Tech. Overtime (Sat/Sun) ({meta.get("tech_ot_days", 0)} day × {money(meta.get("tech_ot_day_rate", 0.0))}/day)</td><td class="right">{money(meta.get("tech_ot_cost", 0.0))}</td></tr>
@@ -1894,7 +1894,7 @@ class MainWindow(QMainWindow):
             {header_html}
             <h3>Estimated Expenses</h3>
             <div class="muted">Includes {int(meta["total_trip_days"])} total trip day(s) across personnel (onsite + travel days).</div>
-            <table class="grid">
+            <table class="grid" width="100%">
                 <tr><th>Expense</th><th>Details</th><th class="right">Amount</th></tr>
                 {''.join(exp_rows)}
                 <tr><td><b>Expenses Subtotal</b></td><td>—</td><td class="right"><b>{money(meta["exp_total"])}</b></td></tr>
