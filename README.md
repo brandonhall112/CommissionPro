@@ -81,7 +81,9 @@ Rules include:
 If skills matrix is missing/unreadable, the app falls back to baseline allocation and shows a non-fatal warning.
 - RPC staffing is isolated from non-RPC staffing (no cross-pollination across pools).
 
----
+## 2) Install-window enforcement
+The app validates that per-person allocations do not exceed the customer install window.
+If a model’s required install + training cannot fit the selected window, the app blocks calculation and shows a clear error.
 
 ## Workload calendar behavior (left column)
 
@@ -111,7 +113,11 @@ RPC rule:
 - Tech travel-in defaults to Sunday.
 - Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
 
----
+- Rows = personnel (T1, T2, … / E1, E2, …)
+- Columns = day slots
+- Light bar = travel day
+- Solid bar = onsite day
+- Printed quote includes the same legend directly below the calendar table.
 
 ## Labor cost model
 
@@ -136,7 +142,10 @@ If OT keys are missing, OT falls back to regular role rates.
 Overtime applies when onsite days land on Saturday or Sunday.
 The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
 
----
+- Tech Regular Time (daily rate)
+- Tech Overtime (Sat/Sun, daily-equivalent rate)
+- Eng Regular Time (daily rate)
+- Eng Overtime (Sat/Sun, daily-equivalent rate)
 
 ## Expense model
 
@@ -153,7 +162,14 @@ Estimated expenses are calculated from person-days/trip-days and workbook rates:
 
 Travel day assumptions (in addition to onsite days) are applied consistently to expense calculations.
 
----
+### OT triggering
+Overtime applies when onsite days land on Saturday or Sunday.
+The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
+
+- Tech Regular Time (daily rate)
+- Tech Overtime (Sat/Sun, daily-equivalent rate)
+- Eng Regular Time (daily rate)
+- Eng Overtime (Sat/Sun, daily-equivalent rate)
 
 ## Quote preview / print
 
