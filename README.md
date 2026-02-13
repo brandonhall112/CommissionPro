@@ -140,6 +140,8 @@ Colors:
 
 ## Expense model
 
+## Expense model
+
 Estimated expenses are calculated from person-days/trip-days and workbook rates:
 
 - Airfare
