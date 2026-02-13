@@ -21,6 +21,11 @@ if os.path.isdir(ASSETS_DIR):
             dest = os.path.join("assets", rel) if rel != "." else "assets"
             datas.append((src, dest))
 
+# Include README for in-app Help viewer in packaged builds.
+README_PATH = os.path.join(PROJECT_DIR, "README.md")
+if os.path.isfile(README_PATH):
+    datas.append((README_PATH, "."))
+
 a = Analysis(
     ["app.py"],
     pathex=[PROJECT_DIR],
