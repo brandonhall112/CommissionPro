@@ -89,7 +89,7 @@ TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 WORKLOAD_CALENDAR_DAYS = 14  # 2-week calendar horizon (Sun-Sat)
 
 # Requested overrides
-#OVERRIDE_AIRFARE_PER_PERSON = 1500.0
+OVERRIDE_AIRFARE_PER_PERSON = 1000.0
 OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
