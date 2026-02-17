@@ -1835,7 +1835,7 @@ class MainWindow(QMainWindow):
             .summary-wrap td {{ vertical-align: top; padding: 10px; background: transparent; border: 0; }}
             .summary-wrap td.col-left {{ width: 48%; padding-right: 28px; }}
             .summary-wrap td.col-right {{ width: 52%; padding-left: 28px; }}
-            .spacer-one-line {{ height: 12px; line-height: 12px; font-size: 1px; }}
+            .spacer-one-line {{ height: 0; line-height: 0; font-size: 1px; }}
             .new-page {{ page-break-before: always; }}
             h3 {{ color: #4c4b4c; margin: 18px 0 8px 0; }}
             .right {{ text-align: right; }}
