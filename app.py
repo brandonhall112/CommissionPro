@@ -88,8 +88,7 @@ MAX_INSTALL_WINDOW = 14
 TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 WORKLOAD_CALENDAR_DAYS = 14  # 2-week calendar horizon (Sun-Sat)
 
-# Requested overrides
-OVERRIDE_AIRFARE_PER_PERSON = 1000.0
+# Requested override
 OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -722,7 +721,7 @@ class MainWindow(QMainWindow):
         self.alert.hide()
         right_l.addWidget(self.alert)
 
-        self.tbl_breakdown = self.make_table(["Model", "Qty", "Tech Days", "Eng Days", "Technicians", "Engineers"])
+        self.tbl_breakdown = self.make_table(["Model", "Qty", "Tech Days", "Eng Days"])
         self.tbl_assign = self.make_table(["Machine Type", "Role", "Person #", "Assigned Days", "Cost"])
         self.tbl_labor = self.make_table(["Role", "Daily Rate", "Total Days", "Personnel", "Total Cost"])
         self.tbl_exp = self.make_table(["Expense", "Details", "Amount"])
@@ -1413,7 +1412,8 @@ class MainWindow(QMainWindow):
         def add_exp(name, qty, unit, detail):
             exp_lines.append(ExpenseLine(name, float(qty), float(unit), float(qty) * float(unit), detail))
 
-        add_exp("Airfare", n_people, OVERRIDE_AIRFARE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_AIRFARE_PER_PERSON)}")
+        airfare, _ = self.data.get_rate("airfare")
+        add_exp("Airfare", n_people, airfare, f"{n_people} person(s) × {money(airfare)}")
         add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
 
         parking, _ = self.data.get_rate("parking")
@@ -1593,12 +1593,10 @@ class MainWindow(QMainWindow):
                     else:
                         eng_disp = f"{r['eng_total']} (training excluded)" if eng_tp > 0 else str(r["eng_total"])
 
-                vals = [r["model"], str(r["qty"]), tech_disp, eng_disp,
-                        "—" if r["tech_headcount"] == 0 else str(r["tech_headcount"]),
-                        "—" if r["eng_headcount"] == 0 else str(r["eng_headcount"])]
+                vals = [r["model"], str(r["qty"]), tech_disp, eng_disp]
                 for c, v in enumerate(vals):
                     it = QTableWidgetItem(v)
-                    if c in [1, 4, 5]:
+                    if c == 1:
                         it.setTextAlignment(Qt.AlignCenter)
                     if c == 2 and r["training_required"]:
                         it.setForeground(Qt.darkYellow)
@@ -1729,8 +1727,6 @@ class MainWindow(QMainWindow):
                 <td style="text-align:center;">{r['qty']}</td>
                 <td>{tech_disp}</td>
                 <td style="text-align:center;">{eng_disp}</td>
-                <td style="text-align:center;">{r['tech_headcount'] if r['tech_headcount'] else "—"}</td>
-                <td style="text-align:center;">{r['eng_headcount'] if r['eng_headcount'] else "—"}</td>
             </tr>""")
 
         exp_rows = []
@@ -1873,8 +1869,7 @@ class MainWindow(QMainWindow):
 
             <h3>Machine Breakdown</h3>
             <table class="grid" width="100%">
-                <tr><th>Model</th><th style="text-align:center;">Qty</th><th>Tech Days</th><th style="text-align:center;">Eng Days</th>
-                    <th style="text-align:center;">Technicians</th><th style="text-align:center;">Engineers</th></tr>
+                <tr><th>Model</th><th style="text-align:center;">Qty</th><th>Tech Days</th><th style="text-align:center;">Eng Days</th></tr>
                 {''.join(mr)}
             </table>
 
