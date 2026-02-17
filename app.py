@@ -89,7 +89,7 @@ TRAVEL_DAYS_PER_PERSON = 2  # travel-in + travel-out
 WORKLOAD_CALENDAR_DAYS = 14  # 2-week calendar horizon (Sun-Sat)
 
 # Requested override
-OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON = 150.0
+OVERRIDE_BAGGAGE_PER_PERSON = 150.0
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 DEFAULT_EXCEL = ASSETS_DIR / "Tech days and quote rates.xlsx"
@@ -1414,7 +1414,7 @@ class MainWindow(QMainWindow):
 
         airfare, _ = self.data.get_rate("airfare")
         add_exp("Airfare", n_people, airfare, f"{n_people} person(s) × {money(airfare)}")
-        add_exp("Baggage", total_trip_days, OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON, f"{int(total_trip_days)} day(s) × {money(OVERRIDE_BAGGAGE_PER_DAY_PER_PERSON)}")
+        add_exp("Baggage", n_people, OVERRIDE_BAGGAGE_PER_PERSON, f"{n_people} person(s) × {money(OVERRIDE_BAGGAGE_PER_PERSON)}")
 
         parking, _ = self.data.get_rate("parking")
         car, _ = self.data.get_rate("car rental")
