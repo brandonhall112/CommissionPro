@@ -1803,7 +1803,7 @@ class MainWindow(QMainWindow):
             <table width="100%" class="topbar" role="presentation">
                 <tr>
                     <td align="left" valign="top" style="padding-top:8px;">
-                        <p class="title">Commissioning Budget Quote</p>
+                        <p class="title">Commissioning Estimate</p>
                         <p class="subtitle muted">Service Estimate</p>
                     </td>
                     <td align="right" valign="top" style="width:220px;"></td>
@@ -1926,7 +1926,7 @@ class MainWindow(QMainWindow):
                 pass
 
             preview = QPrintPreviewDialog(printer, self)
-            preview.setWindowTitle("Print Preview - Commissioning Budget Quote")
+            preview.setWindowTitle("Print Preview - Commissioning Estimate")
             preview.setWindowModality(Qt.ApplicationModal)
             preview.resize(1100, 800)
 
