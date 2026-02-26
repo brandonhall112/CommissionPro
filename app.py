@@ -663,9 +663,21 @@ class MainWindow(QMainWindow):
         self.spin_window = QSpinBox()
         self.spin_window.setRange(MIN_INSTALL_WINDOW, MAX_INSTALL_WINDOW)
         self.spin_window.setValue(DEFAULT_INSTALL_WINDOW)
+        self.spin_window.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.spin_window.valueChanged.connect(self.recalc)
+
+        self.btn_window_minus = QPushButton("-")
+        self.btn_window_minus.setFixedWidth(28)
+        self.btn_window_minus.clicked.connect(lambda: self.spin_window.setValue(max(self.spin_window.minimum(), self.spin_window.value() - 1)))
+
+        self.btn_window_plus = QPushButton("+")
+        self.btn_window_plus.setFixedWidth(28)
+        self.btn_window_plus.clicked.connect(lambda: self.spin_window.setValue(min(self.spin_window.maximum(), self.spin_window.value() + 1)))
+
         win_l.addStretch(1)
+        win_l.addWidget(self.btn_window_minus)
         win_l.addWidget(self.spin_window)
+        win_l.addWidget(self.btn_window_plus)
         win_l.addWidget(QLabel("days"))
         left_l.addWidget(win_box)
 
@@ -996,6 +1008,26 @@ class MainWindow(QMainWindow):
                 ln._set_training_visibility(model)
             finally:
                 ln.chk_training.blockSignals(False)
+
+    @staticmethod
+    def _allocate_supplemental_days(loads: List[int], extra_days: int, window: int) -> List[int]:
+        """Allocate generic/support days onto existing technicians before adding new heads."""
+        pool = list(loads or [])
+        days = int(extra_days or 0)
+        if days <= 0:
+            return pool
+        if not pool:
+            pool = [0]
+
+        for _ in range(days):
+            eligible = [i for i, v in enumerate(pool) if v < window]
+            if not eligible:
+                pool.append(0)
+                eligible = [len(pool) - 1]
+            idx = min(eligible, key=lambda i: pool[i])
+            pool[idx] += 1
+
+        return pool
 
     def _load_skills_matrix(self):
         self.skills_matrix = None
@@ -1359,11 +1391,7 @@ class MainWindow(QMainWindow):
 
                 if self._is_generic_model_name(s.model):
                     total_days = int(info["tech_total"])
-                    if pool_loads:
-                        extra = balanced_allocate(total_days, len(pool_loads))
-                        pool_loads = [pool_loads[i] + extra[i] for i in range(len(pool_loads))]
-                    else:
-                        pool_loads = balanced_allocate(total_days, 1)
+                    pool_loads = self._allocate_supplemental_days(pool_loads, total_days, window)
                 else:
                     alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
                     if not pool_loads:
