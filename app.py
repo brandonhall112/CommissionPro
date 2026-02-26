@@ -427,8 +427,16 @@ class MachineLine(QFrame):
         self.spin_qty.setRange(0, 999)
         self.spin_qty.setValue(1)
         self.spin_qty.setAccelerated(True)
-        self.spin_qty.setButtonSymbols(QAbstractSpinBox.PlusMinus)
+        self.spin_qty.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.spin_qty.valueChanged.connect(self._changed)
+
+        self.btn_qty_minus = QPushButton("-")
+        self.btn_qty_minus.setFixedWidth(28)
+        self.btn_qty_minus.clicked.connect(lambda: self.spin_qty.setValue(max(self.spin_qty.minimum(), self.spin_qty.value() - 1)))
+
+        self.btn_qty_plus = QPushButton("+")
+        self.btn_qty_plus.setFixedWidth(28)
+        self.btn_qty_plus.clicked.connect(lambda: self.spin_qty.setValue(min(self.spin_qty.maximum(), self.spin_qty.value() + 1)))
 
         self.chk_training = QCheckBox("Training Required")
         self.chk_training.setChecked(True)
@@ -442,7 +450,9 @@ class MachineLine(QFrame):
         row.addWidget(QLabel("Machine Model"))
         row.addWidget(self.cmb_model, 2)
         row.addWidget(QLabel("Qty"))
+        row.addWidget(self.btn_qty_minus)
         row.addWidget(self.spin_qty)
+        row.addWidget(self.btn_qty_plus)
         row.addWidget(self.chk_training, 1)
         row.addWidget(self.btn_delete)
 
