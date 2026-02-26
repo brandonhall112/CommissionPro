@@ -852,7 +852,19 @@ class MainWindow(QMainWindow):
         QPushButton#addMachine:pressed { background: #CBD5E1; }
         QPushButton {
             padding: 8px 10px; border-radius: 10px;
-            border: 1px solid #D6D9DD; background: #F8FAFC;
+            border: 1px solid #D6D9DD; background: #F8FAFC; color: #0F172A;
+        }
+        QLineEdit, QComboBox, QSpinBox, QTextEdit {
+            color: #0F172A;
+            background: #FFFFFF;
+            border: 1px solid #D6D9DD;
+            border-radius: 8px;
+            selection-background-color: #DBEAFE;
+        }
+        QComboBox QAbstractItemView {
+            color: #0F172A;
+            background: #FFFFFF;
+            selection-background-color: #DBEAFE;
         }
         QPushButton:disabled { color: #94A3B8; background: #F1F5F9; }
         QFrame#card { background: #FFFFFF; border: 1px solid #E6E8EB; border-radius: 14px; }
@@ -866,11 +878,14 @@ class MainWindow(QMainWindow):
         QLabel#sectionSub { font-size: 12px; color: __NEUTRAL__; }
         QTableWidget#table {
             background: #FFFFFF;
+            color: #0F172A;
             border: 1px solid #EEF0F2;
             border-radius: 12px;
             gridline-color: #E2E8F0;
             selection-background-color: #DBEAFE;
+            alternate-background-color: #F8FAFC;
         }
+        QTableWidget#table::item { color: #0F172A; }
         QHeaderView::section {
             background: #343551;
             color: white;
