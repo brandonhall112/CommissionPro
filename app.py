@@ -65,7 +65,7 @@ def resolve_assets_dir() -> Path:
 import numpy as np
 import openpyxl
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, QRectF
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
@@ -481,6 +481,7 @@ class MachineLine(QFrame):
             qty=int(self.spin_qty.value()) if model else 0,
             training_required=(bool(self.chk_training.isChecked()) if self.chk_training.isVisible() else False)
         )
+
 
 
 class Card(QFrame):
@@ -1561,6 +1562,7 @@ class MainWindow(QMainWindow):
                     item.setBackground(base_color)
 
     def recalc(self):
+        self._refresh_model_choices()
         if len(self.lines) == 0:
             self.reset_views()
             return
