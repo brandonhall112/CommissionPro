@@ -70,7 +70,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QFileDialog, QMessageBox,
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QComboBox, QCheckBox, QFrame, QScrollArea, QSplitter,
-    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QSizePolicy, QAbstractSpinBox,
     QTextBrowser, QDialog, QLineEdit, QTextEdit
 )
 from PySide6.QtPrintSupport import QPrinter, QPrintPreviewDialog
@@ -426,6 +426,8 @@ class MachineLine(QFrame):
         self.spin_qty = QSpinBox()
         self.spin_qty.setRange(0, 999)
         self.spin_qty.setValue(1)
+        self.spin_qty.setAccelerated(True)
+        self.spin_qty.setButtonSymbols(QAbstractSpinBox.PlusMinus)
         self.spin_qty.valueChanged.connect(self._changed)
 
         self.chk_training = QCheckBox("Training Required")
