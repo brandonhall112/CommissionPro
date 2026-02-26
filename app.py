@@ -835,6 +835,8 @@ class MainWindow(QMainWindow):
         css = """
         QFrame#header { background: __BLUE__; color: white; border: none; }
         QLabel#appTitle { color: white; font-size: 20px; font-weight: 800; }
+        QLabel { color: #0F172A; }
+        QCheckBox { color: #0F172A; }
         QFrame#panel { background: white; border: 1px solid #E6E8EB; border-radius: 14px; }
         QLabel#panelTitle { font-size: 16px; font-weight: 800; color: #0F172A; }
         QFrame#softBox { background: #FFF7EA; border: 1px solid #F0D8A8; border-radius: 12px; }
