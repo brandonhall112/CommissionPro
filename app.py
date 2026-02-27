@@ -1016,7 +1016,7 @@ class MainWindow(QMainWindow):
         extra_days: int,
         window: int,
     ) -> Tuple[List[int], List[Dict[str, int]]]:
-        """Allocate supplemental days onto existing technicians before adding heads."""
+        """Allocate supplemental days onto existing technicians and keep per-person model labels."""
         pool = list(loads or [])
         details = [dict(x) for x in (breakdown or [])]
         days = int(extra_days or 0)
