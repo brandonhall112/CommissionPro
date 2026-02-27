@@ -1320,6 +1320,8 @@ class MainWindow(QMainWindow):
             eng_travel_in_day = 1  # Sunday
 
         window = int(self.spin_window.value())
+        eng_stagger_days = max(0, int(eng_travel_in_day) - 1)
+        eng_window = max(1, window - eng_stagger_days)
 
         tech_hr, _ = self.data.get_rate("tech. regular time")
         eng_hr, _ = self.data.get_rate("eng. regular time")
@@ -1361,9 +1363,9 @@ class MainWindow(QMainWindow):
                 raise ValueError(f"{s.model}: Install ({mi.tech_install_days_per_machine}) + Training ({single_training}) exceeds the Customer Install Window ({window}).")
             if mi.eng_days_per_machine > 0:
                 single_eng_training = 1 if (s.training_required and mi.eng_days_per_machine > 0) else 0
-                if mi.eng_days_per_machine + single_eng_training > window:
+                if mi.eng_days_per_machine + single_eng_training > eng_window:
                     raise ValueError(
-                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window})."
+                        f"{s.model}: Engineer ({mi.eng_days_per_machine}) + Training ({single_eng_training}) exceeds the Customer Install Window ({window}) after a {eng_stagger_days}-day engineer start stagger."
                     )
 
             line_calc[s.model] = {
@@ -1408,7 +1410,7 @@ class MainWindow(QMainWindow):
         for s in rpc_engineer_lines:
             mi = self.data.models[s.model]
             info = line_calc[s.model]
-            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), window)
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), eng_window)
             rpc_eng_models.append(s.model)
             if not rpc_eng_pool:
                 rpc_eng_pool = list(eng_alloc)
@@ -1437,7 +1439,7 @@ class MainWindow(QMainWindow):
                 shared_eng_support_lines.append((s.model, total_eng_days))
                 continue
 
-            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), window)
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), eng_window)
             if not non_rpc_eng_pool:
                 non_rpc_eng_pool = list(eng_alloc)
                 non_rpc_eng_breakdown = [{s.model: int(d)} for d in eng_alloc]
@@ -1471,7 +1473,7 @@ class MainWindow(QMainWindow):
                 combined_breakdown,
                 model_name,
                 support_days,
-                window,
+                eng_window,
             )
             rpc_eng_pool = combined_pool[:rpc_heads]
             rpc_eng_breakdown = combined_breakdown[:rpc_heads]
