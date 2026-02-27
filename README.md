@@ -108,8 +108,8 @@ Different technicians may be qualified for different model families. Grouping pr
 When the optional skills matrix workbook is available, tech-only work is partitioned into skill-compatible pools:
 
 - RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are grouped together in a dedicated RPC pool.
-- RPC technicians are kept separate from non-RPC technicians (no cross-pool mixing).
-- Generic/support lines are treated as non-blocking where appropriate.
+- RPC technicians are kept separate from non-RPC technicians for normal model-specific work.
+- **Conveyor / Production Support / Training Day** technician lines are treated as shared support and can be factored across **all technicians** (including RPC techs) to balance load.
 - Models missing from the matrix are treated as supplemental and assigned conservatively.
 
 ### What “refactoring” means in practice
@@ -118,7 +118,7 @@ As you add/remove lines or change quantities, the app re-balances technician poo
 
 - It recalculates required headcount.
 - It redistributes days to reduce overloaded individuals.
-- It keeps the RPC isolation rule intact.
+- It keeps RPC isolation for model-specific work while still spreading shared support days across all technician crews.
 
 So if your scope changes, staffing can be “re-factored” automatically without manual reshuffling.
 
