@@ -22,6 +22,10 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile app.py
+
       - name: Build EXE (onefile)
         run: |
           pyinstaller --clean --noconfirm PearsonCommissioningPro_ONEFILE.spec
