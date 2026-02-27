@@ -1064,8 +1064,57 @@ class MainWindow(QMainWindow):
         return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
 
     @staticmethod
-    def _is_conveyor_model_name(model: str) -> bool:
-        return "CONV" in model.strip().upper()
+    def _is_shared_technician_support_model(model: str) -> bool:
+        upper = model.strip().upper()
+        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
+
+    @staticmethod
+    def _allocate_shared_tech_days_with_breakdown(
+        group_loads: Dict[str, List[int]],
+        group_breakdown: Dict[str, List[Dict[str, int]]],
+        model_name: str,
+        extra_days: int,
+        window: int,
+    ) -> Tuple[Dict[str, List[int]], Dict[str, List[Dict[str, int]]]]:
+        """Spread shared technician-only support days across all current technician pools.
+
+        Used for conveyor, production-support, and training-day style lines that can be
+        handled by any technician regardless of model grouping.
+        """
+        days = int(extra_days or 0)
+        if days <= 0:
+            return group_loads, group_breakdown
+
+        if not group_loads:
+            group_loads["Tech 1"] = [0]
+            group_breakdown["Tech 1"] = [{}]
+
+        for g in list(group_loads.keys()):
+            group_breakdown.setdefault(g, [])
+            while len(group_breakdown[g]) < len(group_loads[g]):
+                group_breakdown[g].append({})
+
+        for _ in range(days):
+            candidates: List[Tuple[int, int, str, int]] = []
+            for g, loads in group_loads.items():
+                total = sum(loads)
+                for i, value in enumerate(loads):
+                    if value < window:
+                        candidates.append((value, total, g, i))
+
+            if candidates:
+                _, _, chosen_group, chosen_idx = min(candidates, key=lambda x: (x[0], x[1], x[2], x[3]))
+            else:
+                chosen_group = min(group_loads.keys(), key=lambda g: (sum(group_loads[g]), len(group_loads[g]), g))
+                group_loads[chosen_group].append(0)
+                group_breakdown[chosen_group].append({})
+                chosen_idx = len(group_loads[chosen_group]) - 1
+
+            group_loads[chosen_group][chosen_idx] += 1
+            detail = group_breakdown[chosen_group][chosen_idx]
+            detail[model_name] = detail.get(model_name, 0) + 1
+
+        return group_loads, group_breakdown
 
     def _partition_tech_groups(self, selections: List[LineSelection]) -> Dict[str, List[LineSelection]]:
         """Partition tech-only lines into crew pools driven by RPC + skills-matrix rules."""
@@ -1395,6 +1444,7 @@ class MainWindow(QMainWindow):
         tech_group_loads: Dict[str, List[int]] = {}
         tech_group_members: Dict[str, List[str]] = {}
         tech_group_breakdown: Dict[str, List[Dict[str, int]]] = {}
+        shared_tech_lines: List[Tuple[str, int]] = []
 
         for group_name, group_lines in group_map.items():
             if not group_lines:
@@ -1410,26 +1460,8 @@ class MainWindow(QMainWindow):
 
                 if self._is_generic_model_name(s.model):
                     total_days = int(info["tech_total"])
-                    if self._is_conveyor_model_name(s.model) and tech_group_loads.get("RPC"):
-                        rpc_loads = list(tech_group_loads.get("RPC", []))
-                        rpc_breakdown = [dict(x) for x in tech_group_breakdown.get("RPC", [])]
-                        while len(rpc_breakdown) < len(rpc_loads):
-                            rpc_breakdown.append({})
-
-                        combined_loads = rpc_loads + pool_loads
-                        combined_breakdown = rpc_breakdown + pool_breakdown
-                        combined_loads, combined_breakdown = self._allocate_supplemental_days_with_breakdown(
-                            combined_loads,
-                            combined_breakdown,
-                            s.model,
-                            total_days,
-                            window,
-                        )
-                        rpc_heads = len(rpc_loads)
-                        tech_group_loads["RPC"] = combined_loads[:rpc_heads]
-                        tech_group_breakdown["RPC"] = combined_breakdown[:rpc_heads]
-                        pool_loads = combined_loads[rpc_heads:]
-                        pool_breakdown = combined_breakdown[rpc_heads:]
+                    if self._is_shared_technician_support_model(s.model):
+                        shared_tech_lines.append((s.model, total_days))
                     else:
                         pool_loads, pool_breakdown = self._allocate_supplemental_days_with_breakdown(
                             pool_loads,
@@ -1467,14 +1499,31 @@ class MainWindow(QMainWindow):
             tech_group_loads[group_name] = pool_loads
             tech_group_breakdown[group_name] = pool_breakdown
 
+        for model_name, days in shared_tech_lines:
+            tech_group_loads, tech_group_breakdown = self._allocate_shared_tech_days_with_breakdown(
+                tech_group_loads,
+                tech_group_breakdown,
+                model_name,
+                days,
+                window,
+            )
+
+        total_tech_headcount = sum(len(loads) for loads in tech_group_loads.values())
+
         for group_name, pool_loads in tech_group_loads.items():
             if not tech_group_members.get(group_name):
                 continue
             pool_breakdown = tech_group_breakdown.get(group_name, [{} for _ in pool_loads])
 
             for idx, row in enumerate(machine_rows):
-                if row["model"] in tech_group_members[group_name]:
-                    machine_rows[idx]["tech_headcount"] = len(pool_loads) if int(row["tech_total"]) > 0 else 0
+                if row["model"] not in tech_group_members[group_name]:
+                    continue
+                if int(row["tech_total"]) <= 0:
+                    machine_rows[idx]["tech_headcount"] = 0
+                elif self._is_shared_technician_support_model(str(row["model"])):
+                    machine_rows[idx]["tech_headcount"] = total_tech_headcount
+                else:
+                    machine_rows[idx]["tech_headcount"] = len(pool_loads)
 
             for i, d in enumerate(pool_loads, 1):
                 detail = pool_breakdown[i - 1] if i - 1 < len(pool_breakdown) else {}

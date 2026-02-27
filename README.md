@@ -1,235 +1,267 @@
 # Pearson Commissioning Pro
 
-Pearson Commissioning Pro is a PySide6 desktop quoting tool that estimates commissioning labor, travel-related expenses, staffing distribution, and total project cost for selected machine models.
+Pearson Commissioning Pro is a desktop quoting tool used to estimate labor, expenses, staffing, and total project cost for commissioning work.
 
-> Note: This README is also used as the in-app Help content and is kept current with each release.
-
----
-
-## What the application does
-
-Given a set of machine lines (model + quantity + training selection), the app calculates and displays:
-
-- Machine breakdown (tech/eng day totals by model)
-- Personnel assignments (balanced by role)
-- Labor costs (regular + overtime)
-- Estimated expenses (airfare, baggage, car, parking, hotel, per diem, prep, travel time)
-- Workload calendar (2-week Sun–Sat Gantt view)
-- Print-ready quote preview
+> **Important:** This README is also the in-app **Help** guide. If a user clicks **Help** in the app, this is what they see.
 
 ---
 
-## Primary inputs
+## Quick start (for non-technical users)
+
+If you only remember one section, use this one:
+
+1. Open the app.
+2. Add each machine type your customer purchased.
+3. Enter quantities.
+4. Check **Training Required** for lines that need training.
+5. Set the **Customer Install Window** (3 to 14 days).
+6. Click **Customer Details** and fill in quote header info.
+7. Click **Calculate/Generate Quote** (or equivalent quote action).
+8. Review machine breakdown, labor, expenses, and total.
+9. Click **Print Quote…** to print or save as PDF.
+
+If something does not calculate, check the install window first. A window that is too short is the most common reason for a blocked quote.
+
+---
+
+## What the app calculates
+
+From your selected machine lines, the app produces:
+
+- Machine day totals (technician and engineer)
+- Recommended staffing counts
+- Per-person workload distribution
+- Labor totals (regular + overtime)
+- Expense totals (travel-related + prep/travel-time)
+- Two-week workload calendar (Sun–Sat)
+- Final quote preview suitable for print/PDF
+
+---
+
+## Inputs you must provide
 
 ### 1) Machine lines
-Each line has:
+
+Each line includes:
 
 - **Model**
 - **Quantity**
-- **Training Required** checkbox (when applicable)
+- **Training Required** (if applicable)
 
-Duplicate model selection is prevented across lines; increase quantity on the existing line instead.
+Tips:
+
+- Do not add the same model twice; increase quantity on the existing line.
+- If training is not needed for a model, uncheck **Training Required** on that line.
 
 ### 2) Customer Install Window
-Install window is a hard limit (3–14 days) for maximum onsite duration per person.
+
+- Hard limit: **3 to 14 days**.
+- This limit controls how many onsite days any one person can be assigned.
+- If required work cannot fit this window, the app blocks the quote and shows an error.
 
 ### 3) Excel workbook(s)
-The core workbook is loaded from:
+
+Required:
 
 - `assets/Tech days and quote rates.xlsx`
 
-Optional skills matrix workbook:
+Optional (recommended for smarter tech grouping):
 
 - `assets/Machine Qualifications for PCP Quoting.xlsx`
 
 ---
 
-## Buttons and top-row controls
+## Top-row buttons
 
-- **Customer Details**: opens a quote-header form for `Customer Name`, `Reference`, `Submitted to`, and `Prepared By` fields used in the shaded top quote summary area.
-- **Load Excel…**: load a different `.xlsx` workbook for the session.
-- **Open Bundled Excel**: opens the packaged/default workbook in your default spreadsheet app.
-- **Help**: opens this README inside the app so users can review logic/assumptions directly.
+- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
+- **Load Excel…**: load a different quote workbook for the current session.
+- **Open Bundled Excel**: open the default packaged workbook.
+- **Help**: open this document in-app.
+- **Print Quote…**: open print preview and print/save PDF.
 
 ---
 
-## Core principles of operation
+## How day totals are built
 
-## 1) Day construction per model
-For each selected model:
+For each machine model:
 
-- `tech_install_days = technician_days_per_machine × qty`
-- `eng_install_days = engineer_days_per_machine × qty`
-- `training_days = ceil(qty / 3)` when training is applicable and enabled
+- `tech_install_days = technician_days_per_machine × quantity`
+- `eng_install_days = engineer_days_per_machine × quantity`
+- `training_days = ceil(quantity / 3)` when training is enabled for that model
 
-Training is model-scoped and can be excluded by unchecking **Training Required**.
+Training is calculated per model line and only included when **Training Required** is checked.
 
-## 2) Install-window enforcement
-The app validates that per-person allocations do not exceed the customer install window.
-If a model’s required install + training cannot fit the selected window, the app blocks calculation and shows a clear error.
+---
 
-## 3) Personnel allocation and load balancing
-Allocation targets minimum feasible headcount while keeping workloads balanced.
-When multiple people are required, days are distributed to minimize peak individual load.
+## Technician grouping and re-grouping (factoring / refactoring)
 
-## 4) Technician skills-group partitioning
-Tech-only lines are partitioned into crew pools using the optional skills matrix.
-Rules include:
+This is the part many users ask about.
 
-- RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are always grouped together in a dedicated RPC pool
-- generic/support lines treated as non-blocking
-- matrix-missing models treated as supplemental and distributed safely
+When multiple machine families are present, the app does more than “divide total days by number of people.” It uses grouping rules so assignments are realistic and safe.
 
-If skills matrix is missing/unreadable, the app falls back to baseline allocation and shows a non-fatal warning.
-- RPC staffing is isolated from non-RPC staffing (no cross-pollination across pools).
+### Why grouping exists
 
-- RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are always grouped together in a dedicated RPC pool
-- generic/support lines treated as non-blocking
-- matrix-missing models treated as supplemental and distributed safely
+Different technicians may be qualified for different model families. Grouping prevents invalid assignments and helps keep teams focused.
 
-## Workload calendar behavior (left column)
+### How grouping works
 
-The quote’s shaded top summary area is two columns:
+When the optional skills matrix workbook is available, tech-only work is partitioned into skill-compatible pools:
 
-- Left: Customer Name, Reference, Submitted to
-- Right: Prepared By, Quote Validity, Total Personnel, Estimated Duration
+- RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are grouped together in a dedicated RPC pool.
+- RPC technicians are kept separate from non-RPC technicians for normal model-specific work.
+- **Conveyor / Production Support / Training Day** technician lines are treated as shared support and can be factored across **all technicians** (including RPC techs) to balance load.
+- Models missing from the matrix are treated as supplemental and assigned conservatively.
 
-Quote Validity, Total Personnel, and Estimated Duration are auto-populated from calculations; the remaining fields come from the **Customer Details** form.
-Customer Details form values are stored in-app for the session and used each time a quote is generated.
+### What “refactoring” means in practice
 
-The workload view is a **2-week (14-day) Sun–Sat Gantt calendar**:
+As you add/remove lines or change quantities, the app re-balances technician pools:
 
-- Rows = personnel (T1, T2, … / E1, E2, …)
+- It recalculates required headcount.
+- It redistributes days to reduce overloaded individuals.
+- It keeps RPC isolation for model-specific work while still spreading shared support days across all technician crews.
+
+So if your scope changes, staffing can be “re-factored” automatically without manual reshuffling.
+
+### If the skills matrix is missing
+
+- Quote still works.
+- App falls back to baseline allocation logic.
+- You receive a warning, not a fatal error.
+
+---
+
+## Engineer and travel scheduling behavior
+
+### Workload calendar
+
+The quote includes a **2-week (14-day) Sun–Sat** calendar:
+
+- Rows = personnel (`T1`, `T2`, … and `E1`, `E2`, …)
 - Columns = day slots
 - Light bar = travel day
 - Solid bar = onsite day
-- Printed quote includes the same legend directly below the calendar table.
 
-Colors:
+Color key:
 
 - Technician: `#e04426`
 - Engineer: `#6790a0`
 
-RPC rule:
+### RPC travel defaults
 
-- Tech travel-in defaults to Sunday.
-- Engineer travel-in defaults to Monday for RPC jobs, and shifts to Tuesday when `RPC-PH` or `RPC-OU` is in scope.
+- Technician travel-in defaults to **Sunday**.
+- Engineer travel-in defaults to **Monday** for RPC jobs.
+- Engineer travel-in shifts to **Tuesday** when `RPC-PH` or `RPC-OU` is in scope.
 
-RPC rule:
+---
 
-## Labor cost model
+## Labor and overtime rules
 
-Labor costs are shown as separate lines by role:
+Labor is shown by role and time class:
 
-- Tech Regular Time (daily rate)
-- Tech Overtime (Sat/Sun, daily-equivalent rate)
-- Eng Regular Time (daily rate)
-- Eng Overtime (Sat/Sun, daily-equivalent rate)
+- Tech Regular Time
+- Tech Overtime
+- Eng Regular Time
+- Eng Overtime
 
-### Rate sourcing
-Rates are read from **Service Rates** in Excel:
+Rates come from the workbook **Service Rates** section using keys:
 
 - `tech. regular time`
 - `eng. regular time`
 - `tech. overtime`
 - `eng. overtime`
 
-If OT keys are missing, OT falls back to regular role rates.
+Overtime rule:
 
-### OT triggering
-Overtime applies when onsite days land on Saturday or Sunday.
-The UI and printed quote display OT using day-based units to stay consistent with the labor table headers.
-
-If OT keys are missing, OT falls back to regular role rates.
-
-## Expense model
-
-Estimated expenses are calculated from person-days/trip-days and workbook rates:
-
-- Airfare
-- Baggage
-- Car rental
-- Parking
-- Hotel nights
-- Per diem
-- Pre/Post trip prep
-- Travel time
-
-Travel day assumptions (in addition to onsite days) are applied consistently to expense calculations.
-
-Estimated expenses are calculated from person-days/trip-days and workbook rates:
-
-- Airfare
-- Baggage
-- Car rental
-- Parking
-- Hotel nights
-- Per diem
-- Pre/Post trip prep
-- Travel time
-
-## Quote preview / print
-
-**Print Quote…** opens a preview window and supports normal print/PDF flows.
-The quote includes:
-
-- machine breakdown
-- labor breakdown (regular + OT)
-- expenses
-- total estimate
-- requirements/assumptions text from workbook where provided
-
-The standalone **Terms & Conditions** section has been removed from the quote output.
+- Onsite days that land on **Saturday/Sunday** count as overtime.
+- If OT rate keys are missing, overtime falls back to regular role rates.
 
 ---
 
-## Assumptions and constraints summary
+## Expense rules (high level)
 
-- Training day rule: **1 day per 3 machines** (when applicable)
-- Install window is a hard per-person onsite cap
-- Allocations are balanced, not greedy
-- Skills matrix affects technician grouping (engineer grouping is not matrix-split in this scope)
-- Missing skills matrix is non-fatal (fallback path)
-- Weekend onsite days trigger overtime calculation
+Estimated expenses are calculated from person-days/trip-days and workbook rates:
+
+- Airfare
+- Baggage
+- Car rental
+- Parking
+- Hotel
+- Per diem
+- Pre/Post trip prep
+- Travel time
+
+Travel-day assumptions are applied consistently alongside onsite days.
+
+---
+
+## Quote header and output details
+
+The shaded quote summary header uses two columns:
+
+- Left: Customer Name, Reference, Submitted to
+- Right: Prepared By, Quote Validity, Total Personnel, Estimated Duration
+
+Auto-populated values:
+
+- Quote Validity
+- Total Personnel
+- Estimated Duration
+
+User-entered values come from **Customer Details** and are reused in-session.
+
+Quote output includes:
+
+- Machine breakdown
+- Labor (regular + overtime)
+- Expenses
+- Total estimate
+- Workload calendar
+- Workbook requirements/assumptions text (when present)
 
 ---
 
 ## Troubleshooting
 
-### Build/runtime syntax issues
-Run:
+### “Calculation failed” or blocked quote
+
+Most likely causes:
+
+1. Install window too short for the required per-person workload.
+2. Required workbook data is missing or changed unexpectedly.
+
+Try:
+
+- Increase install window.
+- Re-open default workbook.
+- Recheck quantities/training checkboxes.
+
+### Workbook not found
+
+Confirm this file exists:
+
+- `assets/Tech days and quote rates.xlsx`
+
+### Help button shows fallback text
+
+`README.md` is missing from runtime location. Include it with the packaged app.
+
+### Syntax/runtime check (for maintainers)
 
 ```bash
 python -m py_compile app.py
 ```
 
-### Workbook not found
-Confirm `assets/Tech days and quote rates.xlsx` exists in packaged assets.
-
-### Help button shows fallback text
-`README.md` was not found in the runtime location. Include it beside the executable (or packaged internal location) if you want full in-app guide text.
-
 ---
 
-## Git safety guard (internal)
+## Internal repo safety (maintainers)
 
-Install repository hooks once:
+Install git hooks once:
 
 ```bash
 ./scripts/install-git-hooks.sh
 ```
 
-This blocks accidental non-`main` commits unless explicitly bypassed.
-
 ---
 
 Publisher: Brandon T. Hall  
 Tool: Pearson Commissioning Pro
-
----
-
-## Recent quote-form updates
-
-- Generated quote now includes a right-aligned Pearson logo pinned at page top so it repeats on subsequent printed pages.
-- Generated quote now includes the workload calendar directly after Machine Breakdown.
-- Overtime lines are presented as day-based rates/quantities to match the labor table semantics.
