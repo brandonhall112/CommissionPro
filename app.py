@@ -1392,13 +1392,19 @@ class MainWindow(QMainWindow):
                 "eng_headcount": eng_headcount,
             })
 
-        # Engineer allocation: RPC models share a dedicated RPC engineer pool,
-        # and never mix with non-RPC work.
+        # Engineer allocation: RPC model-specific work uses a dedicated RPC pool.
+        # Engineer Production Support is treated as shared support work and is
+        # factored onto existing engineer(s) until the install window is reached.
         rpc_engineer_lines = [s for s in selections if s.model in RPC_MODELS and int(line_calc[s.model]["eng_total"]) > 0]
         non_rpc_engineer_lines = [s for s in selections if s.model not in RPC_MODELS and int(line_calc[s.model]["eng_total"]) > 0]
 
         rpc_eng_pool: List[int] = []
+        rpc_eng_breakdown: List[Dict[str, int]] = []
         rpc_eng_models: List[str] = []
+        non_rpc_eng_pool: List[int] = []
+        non_rpc_eng_breakdown: List[Dict[str, int]] = []
+        shared_eng_support_lines: List[Tuple[str, int]] = []
+
         for s in rpc_engineer_lines:
             mi = self.data.models[s.model]
             info = line_calc[s.model]
@@ -1406,38 +1412,109 @@ class MainWindow(QMainWindow):
             rpc_eng_models.append(s.model)
             if not rpc_eng_pool:
                 rpc_eng_pool = list(eng_alloc)
+                rpc_eng_breakdown = [{s.model: int(d)} for d in eng_alloc]
             else:
                 needed = len(eng_alloc)
                 if len(rpc_eng_pool) < needed:
                     rpc_eng_pool.extend([0] * (needed - len(rpc_eng_pool)))
+                while len(rpc_eng_breakdown) < len(rpc_eng_pool):
+                    rpc_eng_breakdown.append({})
                 for i, d in enumerate(eng_alloc):
                     rpc_eng_pool[i] += d
+                    rpc_eng_breakdown[i][s.model] = rpc_eng_breakdown[i].get(s.model, 0) + int(d)
             if rpc_eng_pool and max(rpc_eng_pool) > window:
                 total_pool_days = sum(rpc_eng_pool)
                 min_heads = ceil_int(total_pool_days / window)
                 min_heads = max(min_heads, len(rpc_eng_pool))
                 rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
-
-        rpc_eng_pool = sorted(rpc_eng_pool, reverse=True)
-        if rpc_eng_pool:
-            rpc_model_set = sorted(set(rpc_eng_models))
-            for idx, row in enumerate(machine_rows):
-                if row["model"] in rpc_model_set:
-                    machine_rows[idx]["eng_headcount"] = len(rpc_eng_pool)
-            for i, d in enumerate(rpc_eng_pool, 1):
-                assignments.append(Assignment(", ".join(rpc_model_set), "Engineer", i, d, d * eng_day_rate, "Engineer RPC"))
-            eng_all.extend(rpc_eng_pool)
+                rpc_eng_breakdown = [{"Mixed RPC": int(d)} for d in rpc_eng_pool]
 
         for s in non_rpc_engineer_lines:
             info = line_calc[s.model]
             mi = self.data.models[s.model]
+            total_eng_days = int(info["eng_total"])
+            if "PRODUCTION SUPPORT" in s.model.strip().upper():
+                shared_eng_support_lines.append((s.model, total_eng_days))
+                continue
+
             eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), window)
-            eng_all.extend(eng_alloc)
-            for idx, row in enumerate(machine_rows):
-                if row["model"] == s.model:
-                    machine_rows[idx]["eng_headcount"] = len(eng_alloc)
-            for i, d in enumerate(eng_alloc, 1):
-                assignments.append(Assignment(s.model, "Engineer", i, d, d * eng_day_rate, "Engineer"))
+            if not non_rpc_eng_pool:
+                non_rpc_eng_pool = list(eng_alloc)
+                non_rpc_eng_breakdown = [{s.model: int(d)} for d in eng_alloc]
+            else:
+                needed = len(eng_alloc)
+                if len(non_rpc_eng_pool) < needed:
+                    non_rpc_eng_pool.extend([0] * (needed - len(non_rpc_eng_pool)))
+                while len(non_rpc_eng_breakdown) < len(non_rpc_eng_pool):
+                    non_rpc_eng_breakdown.append({})
+                for i, d in enumerate(eng_alloc):
+                    non_rpc_eng_pool[i] += d
+                    non_rpc_eng_breakdown[i][s.model] = non_rpc_eng_breakdown[i].get(s.model, 0) + int(d)
+            if non_rpc_eng_pool and max(non_rpc_eng_pool) > window:
+                total_pool_days = sum(non_rpc_eng_pool)
+                min_heads = ceil_int(total_pool_days / window)
+                min_heads = max(min_heads, len(non_rpc_eng_pool))
+                non_rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
+                non_rpc_eng_breakdown = [{"Mixed": int(d)} for d in non_rpc_eng_pool]
+
+        for model_name, support_days in shared_eng_support_lines:
+            rpc_heads = len(rpc_eng_pool)
+            combined_pool = list(rpc_eng_pool) + list(non_rpc_eng_pool)
+            combined_breakdown = [dict(x) for x in rpc_eng_breakdown] + [dict(x) for x in non_rpc_eng_breakdown]
+            if not combined_pool:
+                combined_pool = [0]
+                combined_breakdown = [{}]
+                rpc_heads = 0
+
+            combined_pool, combined_breakdown = self._allocate_supplemental_days_with_breakdown(
+                combined_pool,
+                combined_breakdown,
+                model_name,
+                support_days,
+                window,
+            )
+            rpc_eng_pool = combined_pool[:rpc_heads]
+            rpc_eng_breakdown = combined_breakdown[:rpc_heads]
+            non_rpc_eng_pool = combined_pool[rpc_heads:]
+            non_rpc_eng_breakdown = combined_breakdown[rpc_heads:]
+
+        rpc_eng_pool = sorted(zip(rpc_eng_pool, rpc_eng_breakdown), key=lambda x: x[0], reverse=True)
+        rpc_eng_days = [d for d, _ in rpc_eng_pool]
+        rpc_eng_details = [b for _, b in rpc_eng_pool]
+
+        non_rpc_pairs = sorted(zip(non_rpc_eng_pool, non_rpc_eng_breakdown), key=lambda x: x[0], reverse=True)
+        non_rpc_eng_days = [d for d, _ in non_rpc_pairs]
+        non_rpc_eng_details = [b for _, b in non_rpc_pairs]
+
+        total_eng_headcount = len(rpc_eng_days) + len(non_rpc_eng_days)
+
+        for idx, row in enumerate(machine_rows):
+            model_name = str(row["model"])
+            if int(row["eng_total"]) <= 0:
+                machine_rows[idx]["eng_headcount"] = 0
+            elif model_name in set(rpc_eng_models):
+                machine_rows[idx]["eng_headcount"] = len(rpc_eng_days)
+            elif "PRODUCTION SUPPORT" in model_name.strip().upper():
+                machine_rows[idx]["eng_headcount"] = total_eng_headcount if total_eng_headcount > 0 else 1
+            else:
+                machine_rows[idx]["eng_headcount"] = len(non_rpc_eng_days)
+
+        if rpc_eng_days:
+            rpc_model_set = sorted(set(rpc_eng_models))
+            for i, d in enumerate(rpc_eng_days, 1):
+                detail = rpc_eng_details[i - 1] if i - 1 < len(rpc_eng_details) else {}
+                models = sorted([m for m, days in detail.items() if int(days) > 0])
+                machine_type = ", ".join(models) if models else ", ".join(rpc_model_set)
+                assignments.append(Assignment(machine_type, "Engineer", i, d, d * eng_day_rate, "Engineer RPC"))
+            eng_all.extend(rpc_eng_days)
+
+        if non_rpc_eng_days:
+            for i, d in enumerate(non_rpc_eng_days, 1):
+                detail = non_rpc_eng_details[i - 1] if i - 1 < len(non_rpc_eng_details) else {}
+                models = sorted([m for m, days in detail.items() if int(days) > 0])
+                machine_type = ", ".join(models) if models else "Engineer"
+                assignments.append(Assignment(machine_type, "Engineer", i, d, d * eng_day_rate, "Engineer"))
+            eng_all.extend(non_rpc_eng_days)
 
         # Technician allocation with skills-matrix grouping.
         group_map = self._partition_tech_groups(selections)

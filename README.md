@@ -6,7 +6,7 @@ Pearson Commissioning Pro is a desktop quoting tool used to estimate labor, expe
 
 ---
 
-## Quick start 
+## Quick start (for non-technical users)
 
 If you only remember one section, use this one:
 
@@ -58,6 +58,20 @@ Tips:
 - Hard limit: **3 to 14 days**.
 - This limit controls how many onsite days any one person can be assigned.
 - If required work cannot fit this window, the app blocks the quote and shows an error.
+
+### 3) Excel workbook(s)
+
+Required:
+
+---
+
+Optional (recommended for smarter tech grouping):
+
+- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
+- **Load Excel…**: load a different quote workbook for the current session.
+- **Open Bundled Excel**: open the default packaged workbook.
+- **Help**: open this document in-app.
+- **Print Quote…**: open print preview and print/save PDF.
 
 ---
 
@@ -141,6 +155,13 @@ Color key:
 - Technician travel-in defaults to **Sunday**.
 - Engineer travel-in defaults to **Monday** for RPC jobs.
 - Engineer travel-in shifts to **Tuesday** when `RPC-PH` or `RPC-OU` is in scope.
+
+### Engineer production-support factoring
+
+- Engineer **Production Support** days are treated as shared engineer-support work.
+- The app first fills existing engineer capacity up to the install-window limit.
+- Only when existing engineer loads are full does it add another engineer.
+- If a quote has production-support engineer days and no engineer is present yet, the app creates the first engineer assignment.
 
 ---
 
