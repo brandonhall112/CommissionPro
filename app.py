@@ -1010,24 +1010,37 @@ class MainWindow(QMainWindow):
                 ln.chk_training.blockSignals(False)
 
     @staticmethod
-    def _allocate_supplemental_days(loads: List[int], extra_days: int, window: int) -> List[int]:
-        """Allocate generic/support days onto existing technicians before adding new heads."""
+    def _allocate_supplemental_days_with_breakdown(
+        loads: List[int],
+        breakdown: List[Dict[str, int]],
+        model_name: str,
+        extra_days: int,
+        window: int,
+    ) -> Tuple[List[int], List[Dict[str, int]]]:
+        """Allocate supplemental days onto existing technicians while tracking per-person model labels."""
         pool = list(loads or [])
+        details = [dict(x) for x in (breakdown or [])]
         days = int(extra_days or 0)
         if days <= 0:
-            return pool
+            return pool, details
         if not pool:
             pool = [0]
+            details = [{}]
+
+        while len(details) < len(pool):
+            details.append({})
 
         for _ in range(days):
             eligible = [i for i, v in enumerate(pool) if v < window]
             if not eligible:
                 pool.append(0)
+                details.append({})
                 eligible = [len(pool) - 1]
             idx = min(eligible, key=lambda i: pool[i])
             pool[idx] += 1
+            details[idx][model_name] = details[idx].get(model_name, 0) + 1
 
-        return pool
+        return pool, details
 
     def _load_skills_matrix(self):
         self.skills_matrix = None
@@ -1381,12 +1394,14 @@ class MainWindow(QMainWindow):
         group_map = self._partition_tech_groups(selections)
         tech_group_loads: Dict[str, List[int]] = {}
         tech_group_members: Dict[str, List[str]] = {}
+        tech_group_breakdown: Dict[str, List[Dict[str, int]]] = {}
 
         for group_name, group_lines in group_map.items():
             if not group_lines:
                 continue
             tech_group_members[group_name] = [x.model for x in group_lines]
             pool_loads: List[int] = []
+            pool_breakdown: List[Dict[str, int]] = []
             for s in group_lines:
                 mi = self.data.models[s.model]
                 info = line_calc[s.model]
@@ -1397,45 +1412,76 @@ class MainWindow(QMainWindow):
                     total_days = int(info["tech_total"])
                     if self._is_conveyor_model_name(s.model) and tech_group_loads.get("RPC"):
                         rpc_loads = list(tech_group_loads.get("RPC", []))
+                        rpc_breakdown = [dict(x) for x in tech_group_breakdown.get("RPC", [])]
+                        while len(rpc_breakdown) < len(rpc_loads):
+                            rpc_breakdown.append({})
+
                         combined_loads = rpc_loads + pool_loads
-                        combined_loads = self._allocate_supplemental_days(combined_loads, total_days, window)
+                        combined_breakdown = rpc_breakdown + pool_breakdown
+                        combined_loads, combined_breakdown = self._allocate_supplemental_days_with_breakdown(
+                            combined_loads,
+                            combined_breakdown,
+                            s.model,
+                            total_days,
+                            window,
+                        )
                         rpc_heads = len(rpc_loads)
                         tech_group_loads["RPC"] = combined_loads[:rpc_heads]
+                        tech_group_breakdown["RPC"] = combined_breakdown[:rpc_heads]
                         pool_loads = combined_loads[rpc_heads:]
+                        pool_breakdown = combined_breakdown[rpc_heads:]
                     else:
-                        pool_loads = self._allocate_supplemental_days(pool_loads, total_days, window)
+                        pool_loads, pool_breakdown = self._allocate_supplemental_days_with_breakdown(
+                            pool_loads,
+                            pool_breakdown,
+                            s.model,
+                            total_days,
+                            window,
+                        )
                 else:
                     alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
                     if not pool_loads:
                         pool_loads = list(alloc)
+                        pool_breakdown = [{s.model: int(d)} for d in alloc]
                     else:
                         needed = len(alloc)
                         if len(pool_loads) < needed:
                             pool_loads.extend([0] * (needed - len(pool_loads)))
+                        while len(pool_breakdown) < len(pool_loads):
+                            pool_breakdown.append({})
                         for i, d in enumerate(alloc):
                             pool_loads[i] += d
+                            pool_breakdown[i][s.model] = pool_breakdown[i].get(s.model, 0) + int(d)
+
                     if pool_loads and max(pool_loads) > window:
                         total_pool_days = sum(pool_loads)
                         min_heads = ceil_int(total_pool_days / window)
                         min_heads = max(min_heads, len(pool_loads))
                         pool_loads = balanced_allocate(total_pool_days, min_heads)
+                        # Keep machine-type display conservative after rebalancing.
+                        pool_breakdown = [{"Mixed": int(d)} for d in pool_loads]
 
-            pool_loads = sorted(pool_loads, reverse=True)
+            pairs = sorted(zip(pool_loads, pool_breakdown), key=lambda x: x[0], reverse=True)
+            pool_loads = [d for d, _ in pairs]
+            pool_breakdown = [b for _, b in pairs]
             tech_group_loads[group_name] = pool_loads
+            tech_group_breakdown[group_name] = pool_breakdown
 
         for group_name, pool_loads in tech_group_loads.items():
             if not tech_group_members.get(group_name):
                 continue
-            pool_loads = sorted(pool_loads, reverse=True)
-            tech_group_loads[group_name] = pool_loads
+            pool_breakdown = tech_group_breakdown.get(group_name, [{} for _ in pool_loads])
 
             for idx, row in enumerate(machine_rows):
                 if row["model"] in tech_group_members[group_name]:
                     machine_rows[idx]["tech_headcount"] = len(pool_loads) if int(row["tech_total"]) > 0 else 0
 
             for i, d in enumerate(pool_loads, 1):
+                detail = pool_breakdown[i - 1] if i - 1 < len(pool_breakdown) else {}
+                models = sorted([m for m, days in detail.items() if int(days) > 0])
+                machine_type = ", ".join(models) if models else ", ".join(sorted(set(tech_group_members[group_name])))
                 assignments.append(Assignment(
-                    ", ".join(sorted(set(tech_group_members[group_name]))),
+                    machine_type,
                     "Technician",
                     i,
                     d,

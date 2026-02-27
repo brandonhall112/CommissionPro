@@ -2,6 +2,8 @@
 
 Pearson Commissioning Pro is a PySide6 desktop quoting tool that estimates commissioning labor, travel-related expenses, staffing distribution, and total project cost for selected machine models.
 
+> Note: This README is also used as the in-app Help content and is kept current with each release.
+
 ---
 
 ## What the application does
