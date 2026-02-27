@@ -1050,6 +1050,10 @@ class MainWindow(QMainWindow):
             return True
         return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
 
+    @staticmethod
+    def _is_conveyor_model_name(model: str) -> bool:
+        return "CONV" in model.strip().upper()
+
     def _partition_tech_groups(self, selections: List[LineSelection]) -> Dict[str, List[LineSelection]]:
         """Partition tech-only lines into crew pools driven by RPC + skills-matrix rules."""
         groups: Dict[str, List[LineSelection]] = {}
@@ -1391,7 +1395,15 @@ class MainWindow(QMainWindow):
 
                 if self._is_generic_model_name(s.model):
                     total_days = int(info["tech_total"])
-                    pool_loads = self._allocate_supplemental_days(pool_loads, total_days, window)
+                    if self._is_conveyor_model_name(s.model) and tech_group_loads.get("RPC"):
+                        rpc_loads = list(tech_group_loads.get("RPC", []))
+                        combined_loads = rpc_loads + pool_loads
+                        combined_loads = self._allocate_supplemental_days(combined_loads, total_days, window)
+                        rpc_heads = len(rpc_loads)
+                        tech_group_loads["RPC"] = combined_loads[:rpc_heads]
+                        pool_loads = combined_loads[rpc_heads:]
+                    else:
+                        pool_loads = self._allocate_supplemental_days(pool_loads, total_days, window)
                 else:
                     alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
                     if not pool_loads:
@@ -1408,6 +1420,12 @@ class MainWindow(QMainWindow):
                         min_heads = max(min_heads, len(pool_loads))
                         pool_loads = balanced_allocate(total_pool_days, min_heads)
 
+            pool_loads = sorted(pool_loads, reverse=True)
+            tech_group_loads[group_name] = pool_loads
+
+        for group_name, pool_loads in tech_group_loads.items():
+            if not tech_group_members.get(group_name):
+                continue
             pool_loads = sorted(pool_loads, reverse=True)
             tech_group_loads[group_name] = pool_loads
 
