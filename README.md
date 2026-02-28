@@ -65,17 +65,9 @@ Required:
 
 Required:
 
-Required:
-
----
-
 Optional (recommended for smarter tech grouping):
 
-- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
-- **Load Excel…**: load a different quote workbook for the current session.
-- **Open Bundled Excel**: open the default packaged workbook.
-- **Help**: open this document in-app.
-- **Print Quote…**: open print preview and print/save PDF.
+Required:
 
 ---
 
@@ -281,6 +273,12 @@ If a Codex session cannot publish PR metadata because the repository is not conn
 
 ```bash
 ./scripts/ensure-origin-remote.sh
+```
+
+If you need to open the GitHub PR screen directly, generate the compare URL for your current branch:
+
+```bash
+./scripts/open-pr-url.sh
 ```
 
 ---
