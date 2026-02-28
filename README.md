@@ -6,7 +6,7 @@ Pearson Commissioning Pro is a desktop quoting tool used to estimate labor, expe
 
 ---
 
-## Quick start (for non-technical users)
+## Quick start 
 
 If you only remember one section, use this one:
 
@@ -58,26 +58,6 @@ Tips:
 - Hard limit: **3 to 14 days**.
 - This limit controls how many onsite days any one person can be assigned.
 - If required work cannot fit this window, the app blocks the quote and shows an error.
-
-### 3) Excel workbook(s)
-
-Required:
-
-Required:
-
-Optional (recommended for smarter tech grouping):
-
-Required:
-
----
-
-## Top-row buttons
-
-- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
-- **Load Excel…**: load a different quote workbook for the current session.
-- **Open Bundled Excel**: open the default packaged workbook.
-- **Help**: open this document in-app.
-- **Print Quote…**: open print preview and print/save PDF.
 
 ---
 
