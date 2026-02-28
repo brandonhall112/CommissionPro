@@ -63,11 +63,17 @@ Tips:
 
 Required:
 
-- `assets/Tech days and quote rates.xlsx`
+Required:
+
+---
 
 Optional (recommended for smarter tech grouping):
 
-- `assets/Machine Qualifications for PCP Quoting.xlsx`
+- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
+- **Load Excel…**: load a different quote workbook for the current session.
+- **Open Bundled Excel**: open the default packaged workbook.
+- **Help**: open this document in-app.
+- **Print Quote…**: open print preview and print/save PDF.
 
 ---
 
