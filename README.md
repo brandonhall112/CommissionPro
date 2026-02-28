@@ -65,6 +65,8 @@ Required:
 
 Required:
 
+Required:
+
 ---
 
 Optional (recommended for smarter tech grouping):
@@ -124,9 +126,8 @@ As you add/remove lines or change quantities, the app re-balances technician poo
 
 - It recalculates required headcount.
 - It redistributes days to reduce overloaded individuals.
-- It redistributes install and training days using the same shared-support refactoring path (for both technicians and engineers), only adding headcount when the install-window cap is actually reached.
+- It redistributes install and training days using the same shared-support refactoring path (for both technicians and engineers, including RPC), only adding headcount when the install-window cap is actually reached.
 - It keeps RPC isolation for model-specific work while still spreading shared support days across all technician crews.
-- For RPC models, model-selected training days are first refactored onto existing RPC technician/engineer assignments before new headcount is added.
 
 So if your scope changes, staffing can be “re-factored” automatically without manual reshuffling.
 
