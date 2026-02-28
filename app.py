@@ -1036,7 +1036,9 @@ class MainWindow(QMainWindow):
                 pool.append(0)
                 details.append({})
                 eligible = [len(pool) - 1]
-            idx = min(eligible, key=lambda i: pool[i])
+            # Prefer extending the most-loaded existing person still under cap,
+            # so supplemental days fill current resources before expanding headcount.
+            idx = max(eligible, key=lambda i: pool[i])
             pool[idx] += 1
             details[idx][model_name] = details[idx].get(model_name, 0) + 1
 
