@@ -1406,7 +1406,6 @@ class MainWindow(QMainWindow):
         non_rpc_eng_pool: List[int] = []
         non_rpc_eng_breakdown: List[Dict[str, int]] = []
         shared_eng_support_lines: List[Tuple[str, int]] = []
-        shared_eng_training_lines: List[Tuple[str, int]] = []
 
         for s in rpc_engineer_lines:
             mi = self.data.models[s.model]
@@ -1427,7 +1426,7 @@ class MainWindow(QMainWindow):
                     rpc_eng_breakdown[i][s.model] = rpc_eng_breakdown[i].get(s.model, 0) + int(d)
 
             if int(info["eng_training_days"]) > 0:
-                shared_eng_training_lines.append((s.model, int(info["eng_training_days"])))
+                shared_eng_support_lines.append((s.model, int(info["eng_training_days"])))
             if rpc_eng_pool and max(rpc_eng_pool) > eng_window:
                 total_pool_days = sum(rpc_eng_pool)
                 min_heads = ceil_int(total_pool_days / eng_window)
@@ -1458,7 +1457,7 @@ class MainWindow(QMainWindow):
                     non_rpc_eng_breakdown[i][s.model] = non_rpc_eng_breakdown[i].get(s.model, 0) + int(d)
 
             if int(info["eng_training_days"]) > 0:
-                shared_eng_training_lines.append((s.model, int(info["eng_training_days"])))
+                shared_eng_support_lines.append((s.model, int(info["eng_training_days"])))
             if non_rpc_eng_pool and max(non_rpc_eng_pool) > eng_window:
                 total_pool_days = sum(non_rpc_eng_pool)
                 min_heads = ceil_int(total_pool_days / eng_window)
@@ -1489,7 +1488,6 @@ class MainWindow(QMainWindow):
                 non_rpc_eng_pool = combined_pool[rpc_heads:]
                 non_rpc_eng_breakdown = combined_breakdown[rpc_heads:]
 
-        _apply_shared_engineer_days(shared_eng_training_lines)
         _apply_shared_engineer_days(shared_eng_support_lines)
 
         rpc_eng_pool = sorted(zip(rpc_eng_pool, rpc_eng_breakdown), key=lambda x: x[0], reverse=True)
@@ -1536,7 +1534,6 @@ class MainWindow(QMainWindow):
         tech_group_members: Dict[str, List[str]] = {}
         tech_group_breakdown: Dict[str, List[Dict[str, int]]] = {}
         shared_tech_lines: List[Tuple[str, int]] = []
-        shared_tech_training_lines: List[Tuple[str, int]] = []
 
         for group_name, group_lines in group_map.items():
             if not group_lines:
@@ -1578,7 +1575,7 @@ class MainWindow(QMainWindow):
                             pool_breakdown[i][s.model] = pool_breakdown[i].get(s.model, 0) + int(d)
 
                     if int(info["training_days"]) > 0:
-                        shared_tech_training_lines.append((s.model, int(info["training_days"])))
+                        shared_tech_lines.append((s.model, int(info["training_days"])))
 
                     if pool_loads and max(pool_loads) > window:
                         total_pool_days = sum(pool_loads)
@@ -1595,15 +1592,6 @@ class MainWindow(QMainWindow):
             tech_group_breakdown[group_name] = pool_breakdown
 
         for model_name, days in shared_tech_lines:
-            tech_group_loads, tech_group_breakdown = self._allocate_shared_tech_days_with_breakdown(
-                tech_group_loads,
-                tech_group_breakdown,
-                model_name,
-                days,
-                window,
-            )
-
-        for model_name, days in shared_tech_training_lines:
             tech_group_loads, tech_group_breakdown = self._allocate_shared_tech_days_with_breakdown(
                 tech_group_loads,
                 tech_group_breakdown,

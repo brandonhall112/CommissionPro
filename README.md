@@ -6,15 +6,15 @@ Pearson Commissioning Pro is a desktop quoting tool used to estimate labor, expe
 
 ---
 
-## Quick start 
+## Quick start (for non-technical users)
 
 If you only remember one section, use this one:
 
 1. Open the app.
-2. Set the **Customer Install Window** (3 to 14 days).
-3. Add each machine type your customer purchased. 
-4. Enter quantities.
-5.Check **Training Required** for lines that need training.
+2. Add each machine type your customer purchased.
+3. Enter quantities.
+4. Check **Training Required** for lines that need training.
+5. Set the **Customer Install Window** (3 to 14 days).
 6. Click **Customer Details** and fill in quote header info.
 7. Click **Calculate/Generate Quote** (or equivalent quote action).
 8. Review machine breakdown, labor, expenses, and total.
@@ -58,6 +58,20 @@ Tips:
 - Hard limit: **3 to 14 days**.
 - This limit controls how many onsite days any one person can be assigned.
 - If required work cannot fit this window, the app blocks the quote and shows an error.
+
+### 3) Excel workbook(s)
+
+Required:
+
+---
+
+Optional (recommended for smarter tech grouping):
+
+- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
+- **Load Excel…**: load a different quote workbook for the current session.
+- **Open Bundled Excel**: open the default packaged workbook.
+- **Help**: open this document in-app.
+- **Print Quote…**: open print preview and print/save PDF.
 
 ---
 
@@ -108,7 +122,7 @@ As you add/remove lines or change quantities, the app re-balances technician poo
 
 - It recalculates required headcount.
 - It redistributes days to reduce overloaded individuals.
-- It redistributes install and training days onto current people first (for both technicians and engineers), only adding headcount when the install-window cap is actually reached.
+- It redistributes install and training days using the same shared-support refactoring path (for both technicians and engineers), only adding headcount when the install-window cap is actually reached.
 - It keeps RPC isolation for model-specific work while still spreading shared support days across all technician crews.
 
 So if your scope changes, staffing can be “re-factored” automatically without manual reshuffling.
