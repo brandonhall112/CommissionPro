@@ -1406,6 +1406,7 @@ class MainWindow(QMainWindow):
         non_rpc_eng_pool: List[int] = []
         non_rpc_eng_breakdown: List[Dict[str, int]] = []
         shared_eng_support_lines: List[Tuple[str, int]] = []
+        shared_eng_training_lines: List[Tuple[str, int]] = []
 
         for s in rpc_engineer_lines:
             mi = self.data.models[s.model]
@@ -1425,13 +1426,8 @@ class MainWindow(QMainWindow):
                     rpc_eng_pool[i] += d
                     rpc_eng_breakdown[i][s.model] = rpc_eng_breakdown[i].get(s.model, 0) + int(d)
 
-            rpc_eng_pool, rpc_eng_breakdown = self._allocate_supplemental_days_with_breakdown(
-                rpc_eng_pool,
-                rpc_eng_breakdown,
-                s.model,
-                int(info["eng_training_days"]),
-                eng_window,
-            )
+            if int(info["eng_training_days"]) > 0:
+                shared_eng_training_lines.append((s.model, int(info["eng_training_days"])))
             if rpc_eng_pool and max(rpc_eng_pool) > eng_window:
                 total_pool_days = sum(rpc_eng_pool)
                 min_heads = ceil_int(total_pool_days / eng_window)
@@ -1461,13 +1457,8 @@ class MainWindow(QMainWindow):
                     non_rpc_eng_pool[i] += d
                     non_rpc_eng_breakdown[i][s.model] = non_rpc_eng_breakdown[i].get(s.model, 0) + int(d)
 
-            non_rpc_eng_pool, non_rpc_eng_breakdown = self._allocate_supplemental_days_with_breakdown(
-                non_rpc_eng_pool,
-                non_rpc_eng_breakdown,
-                s.model,
-                int(info["eng_training_days"]),
-                eng_window,
-            )
+            if int(info["eng_training_days"]) > 0:
+                shared_eng_training_lines.append((s.model, int(info["eng_training_days"])))
             if non_rpc_eng_pool and max(non_rpc_eng_pool) > eng_window:
                 total_pool_days = sum(non_rpc_eng_pool)
                 min_heads = ceil_int(total_pool_days / eng_window)
@@ -1475,26 +1466,31 @@ class MainWindow(QMainWindow):
                 non_rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
                 non_rpc_eng_breakdown = [{"Mixed": int(d)} for d in non_rpc_eng_pool]
 
-        for model_name, support_days in shared_eng_support_lines:
-            rpc_heads = len(rpc_eng_pool)
-            combined_pool = list(rpc_eng_pool) + list(non_rpc_eng_pool)
-            combined_breakdown = [dict(x) for x in rpc_eng_breakdown] + [dict(x) for x in non_rpc_eng_breakdown]
-            if not combined_pool:
-                combined_pool = [0]
-                combined_breakdown = [{}]
-                rpc_heads = 0
+        def _apply_shared_engineer_days(shared_lines: List[Tuple[str, int]]):
+            nonlocal rpc_eng_pool, rpc_eng_breakdown, non_rpc_eng_pool, non_rpc_eng_breakdown
+            for model_name, extra_days in shared_lines:
+                rpc_heads = len(rpc_eng_pool)
+                combined_pool = list(rpc_eng_pool) + list(non_rpc_eng_pool)
+                combined_breakdown = [dict(x) for x in rpc_eng_breakdown] + [dict(x) for x in non_rpc_eng_breakdown]
+                if not combined_pool:
+                    combined_pool = [0]
+                    combined_breakdown = [{}]
+                    rpc_heads = 0
 
-            combined_pool, combined_breakdown = self._allocate_supplemental_days_with_breakdown(
-                combined_pool,
-                combined_breakdown,
-                model_name,
-                support_days,
-                eng_window,
-            )
-            rpc_eng_pool = combined_pool[:rpc_heads]
-            rpc_eng_breakdown = combined_breakdown[:rpc_heads]
-            non_rpc_eng_pool = combined_pool[rpc_heads:]
-            non_rpc_eng_breakdown = combined_breakdown[rpc_heads:]
+                combined_pool, combined_breakdown = self._allocate_supplemental_days_with_breakdown(
+                    combined_pool,
+                    combined_breakdown,
+                    model_name,
+                    int(extra_days),
+                    eng_window,
+                )
+                rpc_eng_pool = combined_pool[:rpc_heads]
+                rpc_eng_breakdown = combined_breakdown[:rpc_heads]
+                non_rpc_eng_pool = combined_pool[rpc_heads:]
+                non_rpc_eng_breakdown = combined_breakdown[rpc_heads:]
+
+        _apply_shared_engineer_days(shared_eng_training_lines)
+        _apply_shared_engineer_days(shared_eng_support_lines)
 
         rpc_eng_pool = sorted(zip(rpc_eng_pool, rpc_eng_breakdown), key=lambda x: x[0], reverse=True)
         rpc_eng_days = [d for d, _ in rpc_eng_pool]
@@ -1540,6 +1536,7 @@ class MainWindow(QMainWindow):
         tech_group_members: Dict[str, List[str]] = {}
         tech_group_breakdown: Dict[str, List[Dict[str, int]]] = {}
         shared_tech_lines: List[Tuple[str, int]] = []
+        shared_tech_training_lines: List[Tuple[str, int]] = []
 
         for group_name, group_lines in group_map.items():
             if not group_lines:
@@ -1580,13 +1577,8 @@ class MainWindow(QMainWindow):
                             pool_loads[i] += d
                             pool_breakdown[i][s.model] = pool_breakdown[i].get(s.model, 0) + int(d)
 
-                    pool_loads, pool_breakdown = self._allocate_supplemental_days_with_breakdown(
-                        pool_loads,
-                        pool_breakdown,
-                        s.model,
-                        int(info["training_days"]),
-                        window,
-                    )
+                    if int(info["training_days"]) > 0:
+                        shared_tech_training_lines.append((s.model, int(info["training_days"])))
 
                     if pool_loads and max(pool_loads) > window:
                         total_pool_days = sum(pool_loads)
@@ -1603,6 +1595,15 @@ class MainWindow(QMainWindow):
             tech_group_breakdown[group_name] = pool_breakdown
 
         for model_name, days in shared_tech_lines:
+            tech_group_loads, tech_group_breakdown = self._allocate_shared_tech_days_with_breakdown(
+                tech_group_loads,
+                tech_group_breakdown,
+                model_name,
+                days,
+                window,
+            )
+
+        for model_name, days in shared_tech_training_lines:
             tech_group_loads, tech_group_breakdown = self._allocate_shared_tech_days_with_breakdown(
                 tech_group_loads,
                 tech_group_breakdown,
