@@ -1410,7 +1410,7 @@ class MainWindow(QMainWindow):
         for s in rpc_engineer_lines:
             mi = self.data.models[s.model]
             info = line_calc[s.model]
-            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), eng_window)
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, 0, eng_window)
             rpc_eng_models.append(s.model)
             if not rpc_eng_pool:
                 rpc_eng_pool = list(eng_alloc)
@@ -1424,9 +1424,17 @@ class MainWindow(QMainWindow):
                 for i, d in enumerate(eng_alloc):
                     rpc_eng_pool[i] += d
                     rpc_eng_breakdown[i][s.model] = rpc_eng_breakdown[i].get(s.model, 0) + int(d)
-            if rpc_eng_pool and max(rpc_eng_pool) > window:
+
+            rpc_eng_pool, rpc_eng_breakdown = self._allocate_supplemental_days_with_breakdown(
+                rpc_eng_pool,
+                rpc_eng_breakdown,
+                s.model,
+                int(info["eng_training_days"]),
+                eng_window,
+            )
+            if rpc_eng_pool and max(rpc_eng_pool) > eng_window:
                 total_pool_days = sum(rpc_eng_pool)
-                min_heads = ceil_int(total_pool_days / window)
+                min_heads = ceil_int(total_pool_days / eng_window)
                 min_heads = max(min_heads, len(rpc_eng_pool))
                 rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
                 rpc_eng_breakdown = [{"Mixed RPC": int(d)} for d in rpc_eng_pool]
@@ -1439,7 +1447,7 @@ class MainWindow(QMainWindow):
                 shared_eng_support_lines.append((s.model, total_eng_days))
                 continue
 
-            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, int(info["eng_training_days"]), eng_window)
+            eng_alloc = chunk_allocate_by_machine(mi.eng_days_per_machine, s.qty, 0, eng_window)
             if not non_rpc_eng_pool:
                 non_rpc_eng_pool = list(eng_alloc)
                 non_rpc_eng_breakdown = [{s.model: int(d)} for d in eng_alloc]
@@ -1452,9 +1460,17 @@ class MainWindow(QMainWindow):
                 for i, d in enumerate(eng_alloc):
                     non_rpc_eng_pool[i] += d
                     non_rpc_eng_breakdown[i][s.model] = non_rpc_eng_breakdown[i].get(s.model, 0) + int(d)
-            if non_rpc_eng_pool and max(non_rpc_eng_pool) > window:
+
+            non_rpc_eng_pool, non_rpc_eng_breakdown = self._allocate_supplemental_days_with_breakdown(
+                non_rpc_eng_pool,
+                non_rpc_eng_breakdown,
+                s.model,
+                int(info["eng_training_days"]),
+                eng_window,
+            )
+            if non_rpc_eng_pool and max(non_rpc_eng_pool) > eng_window:
                 total_pool_days = sum(non_rpc_eng_pool)
-                min_heads = ceil_int(total_pool_days / window)
+                min_heads = ceil_int(total_pool_days / eng_window)
                 min_heads = max(min_heads, len(non_rpc_eng_pool))
                 non_rpc_eng_pool = balanced_allocate(total_pool_days, min_heads)
                 non_rpc_eng_breakdown = [{"Mixed": int(d)} for d in non_rpc_eng_pool]
@@ -1550,7 +1566,7 @@ class MainWindow(QMainWindow):
                             window,
                         )
                 else:
-                    alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, int(info["training_days"]), window)
+                    alloc = chunk_allocate_by_machine(mi.tech_install_days_per_machine, s.qty, 0, window)
                     if not pool_loads:
                         pool_loads = list(alloc)
                         pool_breakdown = [{s.model: int(d)} for d in alloc]
@@ -1563,6 +1579,14 @@ class MainWindow(QMainWindow):
                         for i, d in enumerate(alloc):
                             pool_loads[i] += d
                             pool_breakdown[i][s.model] = pool_breakdown[i].get(s.model, 0) + int(d)
+
+                    pool_loads, pool_breakdown = self._allocate_supplemental_days_with_breakdown(
+                        pool_loads,
+                        pool_breakdown,
+                        s.model,
+                        int(info["training_days"]),
+                        window,
+                    )
 
                     if pool_loads and max(pool_loads) > window:
                         total_pool_days = sum(pool_loads)
