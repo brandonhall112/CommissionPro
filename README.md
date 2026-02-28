@@ -63,11 +63,11 @@ Tips:
 
 Required:
 
-- `assets/Tech days and quote rates.xlsx`
+Required:
 
 Optional (recommended for smarter tech grouping):
 
-- `assets/Machine Qualifications for PCP Quoting.xlsx`
+Required:
 
 ---
 
