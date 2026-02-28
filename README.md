@@ -63,6 +63,8 @@ Tips:
 
 Required:
 
+Required:
+
 ---
 
 Optional (recommended for smarter tech grouping):
@@ -272,6 +274,12 @@ Install git hooks once:
 
 ```bash
 ./scripts/install-git-hooks.sh
+```
+
+If a Codex session cannot publish PR metadata because the repository is not connected to a Git remote, the maintainer bootstrap helper can auto-configure `origin` from merge history:
+
+```bash
+./scripts/ensure-origin-remote.sh
 ```
 
 ---
