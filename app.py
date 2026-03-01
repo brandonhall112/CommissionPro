@@ -1063,12 +1063,17 @@ class MainWindow(QMainWindow):
         upper = model.strip().upper()
         if upper in GENERIC_MODEL_ALIASES:
             return True
-        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
+        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY", "TRAIN DAY"))
 
     @staticmethod
     def _is_shared_technician_support_model(model: str) -> bool:
         upper = model.strip().upper()
-        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY"))
+        return any(tok in upper for tok in ("CONV", "PRODUCTION SUPPORT", "TRAINING DAY", "TRAIN DAY"))
+
+    @staticmethod
+    def _is_shared_engineer_support_model(model: str) -> bool:
+        upper = model.strip().upper()
+        return any(tok in upper for tok in ("PRODUCTION SUPPORT", "TRAINING DAY", "TRAIN DAY"))
 
     @staticmethod
     def _allocate_shared_tech_days_with_breakdown(
@@ -1440,7 +1445,7 @@ class MainWindow(QMainWindow):
             info = line_calc[s.model]
             mi = self.data.models[s.model]
             total_eng_days = int(info["eng_total"])
-            if "PRODUCTION SUPPORT" in s.model.strip().upper():
+            if self._is_shared_engineer_support_model(s.model):
                 shared_eng_support_lines.append((s.model, total_eng_days))
                 continue
 

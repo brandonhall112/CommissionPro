@@ -6,7 +6,7 @@ Pearson Commissioning Pro is a desktop quoting tool used to estimate labor, expe
 
 ---
 
-## Quick start 
+## Quick start (for non-technical users)
 
 If you only remember one section, use this one:
 
@@ -59,7 +59,31 @@ Tips:
 - This limit controls how many onsite days any one person can be assigned.
 - If required work cannot fit this window, the app blocks the quote and shows an error.
 
+### 3) Excel workbook(s)
+
+Required:
+
 ---
+
+## How day totals are built
+
+For each machine model:
+
+Optional (recommended for smarter tech grouping):
+
+Training is calculated per model line and only included when **Training Required** is checked.
+
+---
+
+## Top-row buttons
+
+- **Customer Details**: enter Customer Name, Reference, Submitted to, Prepared By.
+- **Load Excel…**: load a different quote workbook for the current session.
+- **Open Bundled Excel**: open the default packaged workbook.
+- **Help**: open this document in-app.
+- **Print Quote…**: open print preview and print/save PDF.
+
+When multiple machine families are present, the app does more than “divide total days by number of people.” It uses grouping rules so assignments are realistic and safe.
 
 ## How day totals are built
 
@@ -89,7 +113,7 @@ When the optional skills matrix workbook is available, tech-only work is partiti
 
 - RPC models (`RPC-C`, `RPC-DF`, `RPC-PH`, `RPC-OU`) are grouped together in a dedicated RPC pool.
 - RPC technicians are kept separate from non-RPC technicians for normal model-specific work.
-- **Conveyor / Production Support / Training Day** technician lines are treated as shared support and can be factored across **all technicians** (including RPC techs) to balance load.
+- **Conveyor / Production Support / Training Day (including "Train Day" entries)** technician lines are treated as shared support and can be factored across **all technicians** (including RPC techs) to balance load.
 - Models missing from the matrix are treated as supplemental and assigned conservatively.
 
 ### What “refactoring” means in practice
