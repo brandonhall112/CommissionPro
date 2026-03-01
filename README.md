@@ -63,11 +63,15 @@ Tips:
 
 Required:
 
-- `assets/Tech days and quote rates.xlsx`
+---
+
+## How day totals are built
+
+For each machine model:
 
 Optional (recommended for smarter tech grouping):
 
-- `assets/Machine Qualifications for PCP Quoting.xlsx`
+Training is calculated per model line and only included when **Training Required** is checked.
 
 ---
 
@@ -79,7 +83,7 @@ Optional (recommended for smarter tech grouping):
 - **Help**: open this document in-app.
 - **Print Quote…**: open print preview and print/save PDF.
 
----
+When multiple machine families are present, the app does more than “divide total days by number of people.” It uses grouping rules so assignments are realistic and safe.
 
 ## How day totals are built
 
